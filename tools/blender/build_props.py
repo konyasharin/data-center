@@ -217,9 +217,11 @@ def make_patch_panel():
 
 
 def make_switch():
+	"""Deeper than a real access switch on purpose: at 300 mm it sat less than half
+	as deep as the servers around it and read as a broken chassis in an open rack."""
 	b = Builder()
 	h = U - 2 * MM
-	w, d = RACK_PANEL_WIDTH, 0.30
+	w, d = RACK_PANEL_WIDTH, 0.46
 	b.box((w - 50 * MM, d, h), (0, d / 2, 0), "steel_dark", bevel=1.5 * MM)
 	for sx in (-1, 1):
 		b.box((26 * MM, 4 * MM, h), (sx * (w / 2 - 13 * MM), 2 * MM, 0), "steel",

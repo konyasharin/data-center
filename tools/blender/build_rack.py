@@ -140,13 +140,32 @@ def _front_panel(b, units, width, height, cz, front=14 * MM):
 			b.quad((3.5 * MM, 3.5 * MM), (x + bay["w"] * 0.24, 0.4 * MM,
 			                              z - bay["h"] * 0.3), "led_green", facing=-1)
 
-	cx = width / 2 - 40 * MM
-	b.box((24 * MM, 6 * MM, height * 0.8), (cx, -3 * MM, cz), "plastic_dark", bevel=0.8 * MM)
-	for i, led in enumerate(("led_green", "led_amber", "led_blue")):
-		b.box((5 * MM, 2 * MM, 5 * MM),
-		      (cx - 9 * MM + i * 9 * MM, -7 * MM, cz + height * 0.22), led)
-	b.cyl(5 * MM, 5 * MM, (cx, -4 * MM, cz - height * 0.18), "plastic_grey", sides=10,
-	      rot=(90, 0, 0))
+	# operator panel: display, power button, status pips. Flat quads on the atlas so
+	# the whole chassis stays on one surface (a MultiMesh draws only the first)
+	cx = width / 2 - 44 * MM
+	panel_w = 54 * MM
+	b.box((panel_w, 6 * MM, height * 0.86), (cx, -3 * MM, cz), "plastic_dark",
+	      bevel=0.8 * MM)
+
+	screen_w, screen_h = 30 * MM, height * 0.30
+	screen_x = cx - panel_w / 2 + screen_w / 2 + 4 * MM
+	b.quad((screen_w, screen_h), (screen_x, -6.2 * MM, cz + height * 0.18),
+	       "screen_on", facing=-1)
+	for i in range(3):
+		b.quad((screen_w * (0.72 - i * 0.16), screen_h * 0.13),
+		       (screen_x - screen_w * (0.1 + i * 0.08), -6.4 * MM,
+		        cz + height * 0.18 + screen_h * (0.22 - i * 0.22)), "label", facing=-1)
+
+	button_x = cx + panel_w / 2 - 9 * MM
+	b.cyl(6 * MM, 5 * MM, (button_x, -5 * MM, cz + height * 0.16), "plastic_grey",
+	      sides=12, rot=(90, 0, 0))
+	b.quad((7 * MM, 7 * MM), (button_x, -7.8 * MM, cz + height * 0.16), "led_blue",
+	       facing=-1)
+
+	for i, led in enumerate(("led_green", "led_amber", "led_red")):
+		b.quad((4 * MM, 4 * MM),
+		       (cx - panel_w / 2 + 8 * MM + i * 9 * MM, -6.4 * MM, cz - height * 0.26),
+		       led, facing=-1)
 
 	b.louvres((16 * MM, height * 0.74, 6 * MM), (-width / 2 + 22 * MM, -4 * MM, cz),
 	          max(2, units * 2), "mesh_black")

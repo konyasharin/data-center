@@ -69,6 +69,8 @@ const SHOTS := [
 	["hall_floor", Vector3(1.8, 0.95, 0.6), Vector3(-1.2, 0.48, 0.0)],
 	["hall_rear", Vector3(3.0, 1.60, -3.2), Vector3(-2.0, 1.30, -2.3)],
 	["rack_face", Vector3(-0.15, 2.05, 0.95), Vector3(-0.95, 1.35, -0.35)],
+	["open_rack_top", Vector3(-0.95, 2.05, 0.05), Vector3(-0.90, 1.20, -1.05)],
+	["front_detail", Vector3(-0.60, 1.35, 0.20), Vector3(-0.90, 1.28, -1.00)],
 	["rear_close", Vector3(-0.30, 1.55, -2.55), Vector3(-1.10, 1.30, -1.95)],
 	["rear_angle", Vector3(0.90, 1.70, -2.90), Vector3(-1.20, 1.25, -2.05)],
 	["lod_near", Vector3(0.55, 1.45, -0.35), Vector3(-0.30, 1.30, -1.00)],

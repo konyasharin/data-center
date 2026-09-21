@@ -9,13 +9,22 @@ import bpy
 ATLAS = 16  # texels per side
 
 # name: (hex srgb, metallic, roughness, emission strength)
+#
+# Metallic values are deliberately low. Painted sheet steel is not a mirror, and a
+# high-metal low-roughness surface on 1 mm chamfers produces specular aliasing: the
+# highlight is smaller than a pixel, so it flickers as pale rectangles crawling over
+# a rack. Matte surfaces are both more accurate here and stable in motion.
+#
+# Lightness is deliberately compressed too. Bright fittings on a near-black chassis
+# read as loose patches in a dim hall rather than as a handle and a carrier row; the
+# real thing is all one dark grey with a little relief.
 SLOTS = [
-	("steel_dark", 0x2B2E33, 0.35, 0.58, 0.0),
-	("steel", 0x484D55, 0.50, 0.52, 0.0),
-	("steel_light", 0x7B8189, 0.75, 0.44, 0.0),
-	("alu", 0xA8ADB4, 1.00, 0.33, 0.0),
-	("alu_brushed", 0x8F959C, 0.90, 0.48, 0.0),
-	("rack_black", 0x1A1D20, 0.25, 0.62, 0.0),
+	("steel_dark", 0x353A41, 0.15, 0.68, 0.0),
+	("steel", 0x474C54, 0.25, 0.64, 0.0),
+	("steel_light", 0x5C626A, 0.30, 0.62, 0.0),
+	("alu", 0x8C9299, 0.55, 0.52, 0.0),
+	("alu_brushed", 0x6B7178, 0.35, 0.64, 0.0),
+	("rack_black", 0x1A1D20, 0.10, 0.72, 0.0),
 	("mesh_black", 0x0C0D0F, 0.50, 0.70, 0.0),
 	("plastic_dark", 0x1A1B1E, 0.00, 0.60, 0.0),
 	("plastic_grey", 0x55585C, 0.00, 0.55, 0.0),
@@ -23,8 +32,8 @@ SLOTS = [
 	("ceiling_tile", 0x8E9296, 0.00, 0.80, 0.0),
 	("rubber", 0x131416, 0.00, 0.85, 0.0),
 	("pcb", 0x1F5F3F, 0.00, 0.55, 0.0),
-	("gold", 0xC9A227, 1.00, 0.30, 0.0),
-	("copper", 0xB06A3B, 1.00, 0.35, 0.0),
+	("gold", 0xC9A227, 0.80, 0.42, 0.0),
+	("copper", 0xB06A3B, 0.80, 0.45, 0.0),
 	("label", 0xE8E9EA, 0.00, 0.45, 0.0),
 	("glass", 0x141A20, 0.00, 0.10, 0.0),
 	("screen_off", 0x0B0D10, 0.00, 0.20, 0.0),
@@ -40,9 +49,9 @@ SLOTS = [
 	("cable_black", 0x111214, 0.00, 0.60, 0.0),
 	("concrete", 0x8C8880, 0.00, 0.80, 0.0),
 	("concrete_dark", 0x5E5B56, 0.00, 0.85, 0.0),
-	("wall_panel", 0x9BA1A5, 0.35, 0.55, 0.0),
-	("wall_panel_dark", 0x6C7276, 0.35, 0.60, 0.0),
-	("roof_metal", 0x767C80, 0.60, 0.50, 0.0),
+	("wall_panel", 0x9BA1A5, 0.20, 0.65, 0.0),
+	("wall_panel_dark", 0x6C7276, 0.20, 0.68, 0.0),
+	("roof_metal", 0x767C80, 0.35, 0.60, 0.0),
 	("wood", 0x7B6A56, 0.00, 0.72, 0.0),
 	("cardboard", 0xA8875A, 0.00, 0.85, 0.0),
 	("paint_yellow", 0xD8A417, 0.00, 0.50, 0.0),
@@ -55,7 +64,7 @@ SLOTS = [
 	("cloth_navy", 0x2B3440, 0.00, 0.75, 0.0),
 	("cloth_grey", 0x585E66, 0.00, 0.75, 0.0),
 	("hi_vis", 0xD9E03A, 0.00, 0.65, 0.0),
-	("hi_vis_strip", 0xC8CCD0, 0.30, 0.40, 0.0),
+	("hi_vis_strip", 0xC8CCD0, 0.20, 0.55, 0.0),
 	("boots", 0x1C1A18, 0.00, 0.70, 0.0),
 	("helmet_white", 0xE2E4E6, 0.00, 0.35, 0.0),
 ]

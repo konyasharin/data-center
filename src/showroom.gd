@@ -33,6 +33,9 @@ func _ready() -> void:
 	_people()
 	_hud()
 
+	if "--matte" in OS.get_cmdline_user_args():
+		_matte()
+
 	if "--stats" in OS.get_cmdline_user_args():
 		_stats()
 
@@ -51,8 +54,8 @@ const SHOTS := [
 	["hall_wide", Vector3(4.2, 2.35, 3.3), Vector3(-1.0, 1.10, -0.6)],
 	["hall_floor", Vector3(1.8, 0.95, 0.6), Vector3(-1.2, 0.48, 0.0)],
 	["hall_rear", Vector3(3.0, 1.60, -3.2), Vector3(-2.0, 1.30, -2.3)],
-	["probe_face", Vector3(0.75, 1.30, 0.62), Vector3(-0.55, 1.15, -0.35)],
-	["probe_far", Vector3(5.2, 1.55, 0.2), Vector3(-2.0, 1.20, -0.4)],
+	["rack_face", Vector3(-0.15, 2.05, 0.95), Vector3(-0.95, 1.35, -0.35)],
+	["rack_row", Vector3(5.2, 1.55, 0.2), Vector3(-2.0, 1.20, -0.4)],
 	["shed_inside", Vector3(2.6, 1.65, 18.4), Vector3(-1.6, 1.2, 16.4)],
 	["shed_terminal", Vector3(2.9, 1.45, 16.4), Vector3(2.0, 0.85, 17.2)],
 	["catalogue", Vector3(-4.2, 2.1, -5.6), Vector3(-6.6, 0.95, -8.6)],
@@ -81,6 +84,25 @@ func _shoot() -> void:
 	get_tree().quit()
 
 
+func _tint(mmi: MultiMeshInstance3D, colour: Color) -> void:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = colour
+	mat.roughness = 1.0
+	mmi.material_override = mat
+
+
+func _matte() -> void:
+	## Diagnostic: kill the specular response but keep every albedo. Overriding the
+	## whole material also flattens colour, which makes light parts look like they
+	## vanished when they were only repainted.
+	var mat: StandardMaterial3D = Assets.material("dc_atlas")
+	mat.metallic = 0.0
+	mat.metallic_texture = null
+	mat.roughness = 1.0
+	mat.roughness_texture = null
+	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+
+
 func _stats() -> void:
 	var meshes := 0
 	var multi := 0
@@ -107,17 +129,19 @@ func _environment() -> void:
 	env.background_color = Color(0.02, 0.022, 0.026)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.30, 0.36, 0.46)
-	env.ambient_light_energy = 0.12
+	# a hall lit only from the ceiling leaves vertical faces near-black, and every
+	# small horizontal ledge on a chassis then flares as a loose bright patch
+	env.ambient_light_energy = 0.34
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = 0.9
 	env.ssao_enabled = true
 	env.ssao_radius = 0.6
-	env.ssao_intensity = 2.2
+	env.ssao_intensity = 1.5
 	env.ssr_enabled = false
 	env.glow_enabled = true
-	env.glow_intensity = 0.45
+	env.glow_intensity = 0.35
 	env.glow_bloom = 0.12
-	env.glow_hdr_threshold = 0.95
+	env.glow_hdr_threshold = 1.25
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.10, 0.11, 0.13)
 	env.fog_density = 0.004
@@ -141,7 +165,7 @@ func _ceiling_lamp(at: Vector3, length := 1.24) -> void:
 
 	var light := OmniLight3D.new()
 	light.position = at + Vector3(0, -0.45, 0)
-	light.light_energy = 5.5
+	light.light_energy = 4.2
 	light.light_color = Color(0.82, 0.88, 1.0)
 	light.omni_range = 5.8
 	light.omni_attenuation = 1.8
@@ -304,10 +328,13 @@ func _populate(root: Node3D, index: int) -> void:
 	# from docs/10-tech-architecture.md doing real work rather than an anti-alias hack.
 	var servers := _multimesh("hardware/server_1u", root)
 	var servers_far := _multimesh("hardware/server_1u_lod1", root)
+	# fade across the switch: a hard swap pops the whole rack as you walk up to it
 	servers.visibility_range_end = LOD_SWITCH
-	servers.visibility_range_end_margin = 1.5
+	servers.visibility_range_end_margin = 2.5
+	servers.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	servers_far.visibility_range_begin = LOD_SWITCH
-	servers_far.visibility_range_begin_margin = 1.5
+	servers_far.visibility_range_begin_margin = 2.5
+	servers_far.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	var big := _multimesh("hardware/server_4u", root)
 	var blanks := _multimesh("hardware/blanking_panel_1u", root)
 	var patch := _multimesh("hardware/patch_panel_1u", root)
@@ -346,6 +373,14 @@ func _populate(root: Node3D, index: int) -> void:
 
 	_fill(servers, server_tf)
 	_fill(servers_far, server_tf)
+
+	if "--rainbow" in OS.get_cmdline_user_args():
+		_tint(servers, Color(1, 0.1, 0.1))
+		_tint(servers_far, Color(0.1, 0.3, 1))
+		_tint(blanks, Color(0.1, 1, 0.2))
+		_tint(patch, Color(1, 0.9, 0.1))
+		_tint(switches, Color(1, 0.2, 1))
+		_tint(managers, Color(1, 0.55, 0.05))
 	_fill(big, big_tf)
 	_fill(blanks, blank_tf)
 	_fill(patch, patch_tf)

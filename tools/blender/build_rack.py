@@ -54,73 +54,104 @@ def make_drive(kind="lff", name=None):
 
 # ---------------------------------------------------------------- chassis
 
-def _front_panel(b, units, width, height, cz):
-	"""Bezel detail on the -Y face. `cz` is the chassis centre height."""
-	face = 1.5 * MM
-
-	for sx in (-1, 1):
-		x = sx * (RACK_PANEL_WIDTH / 2 - 13 * MM)
-		b.box((26 * MM, 5 * MM, height * 0.94), (x, face, cz), "steel", bevel=0.8 * MM)
-		for sz in ((0,) if units == 1 else (-0.3, 0.3)):
-			b.cyl(3.5 * MM, 4 * MM, (x, face - 1 * MM, cz + sz * height),
-			      "plastic_dark", sides=8, rot=(90, 0, 0))
-
-	for sx in (-1, 1):
-		x = sx * (width / 2 - 14 * MM)
-		b.box((13 * MM, 26 * MM, height * 0.66), (x, -9 * MM, cz), "steel_light",
-		      bevel=1.5 * MM)
-
-	bay_zone_l = -width / 2 + 34 * MM
-	bay_zone_r = width / 2 - 58 * MM
-	span = bay_zone_r - bay_zone_l
-
+def _bay_layout(units, width, height, cz):
 	if units == 1:
 		# a 2.5" carrier cannot stand up inside 44 mm, so a 1U bay reads as a narrow
 		# vertical slot: carrier thickness across the face, drive depth into the box
-		face_w, face_h = SFF_H + 4 * MM, height * 0.76
-		rows = 1
+		face_w, face_h, rows = SFF_H + 4 * MM, height * 0.60, 1
 	else:
 		face_w, face_h = LFF_W, LFF_H
 		rows = max(1, min(4, int((height - 12 * MM) // (face_h + 4 * MM))))
 
+	zone_l, zone_r = -width / 2 + 34 * MM, width / 2 - 58 * MM
 	pitch_x = face_w + 4 * MM
-	bays = max(1, min(10, int(span // pitch_x)))  # real 1U chassis top out around 10
-	start_x = (bay_zone_l + bay_zone_r) / 2 - pitch_x * (bays - 1) / 2
+	bays = max(1, min(10, int((zone_r - zone_l) // pitch_x)))
 	pitch_z = face_h + 4 * MM
-	start_z = cz - pitch_z * (rows - 1) / 2
-	bw, bh = face_w, face_h
+	return {
+		"w": face_w, "h": face_h, "rows": rows, "bays": bays,
+		"pitch_x": pitch_x, "pitch_z": pitch_z,
+		"x0": (zone_l + zone_r) / 2 - pitch_x * (bays - 1) / 2,
+		"z0": cz - pitch_z * (rows - 1) / 2,
+	}
 
-	# recessed bay well: the dark gap around each carrier is what makes the row read
-	b.box((pitch_x * bays + 6 * MM, 8 * MM, pitch_z * rows + 6 * MM),
-	      (start_x + pitch_x * (bays - 1) / 2, -2.5 * MM, cz), "mesh_black",
-	      bevel=0.6 * MM)
-	assert pitch_x > bw, f"drive bays overlap: pitch {pitch_x:.4f} <= carrier {bw:.4f}"
 
-	for r in range(rows):
-		for i in range(bays):
-			x, z = start_x + i * pitch_x, start_z + r * pitch_z
-			b.box((bw, 9 * MM, bh), (x, face - 2.5 * MM, z), "steel_dark",
-			      bevel=0.8 * MM, mat_faces={"-Y": "alu_brushed"})
+def _front_panel(b, units, width, height, cz, front=14 * MM):
+	"""Bezel on the -Y face, built as a frame around a real opening.
+
+	An earlier version laid a dark 'recess' panel over the solid front face. Two
+	surfaces a millimetre apart is z-fighting by construction, and it showed up as
+	pale rectangles crawling across the chassis. The opening is a hole in the front
+	plate instead, so nothing is stacked.
+	"""
+	bay = _bay_layout(units, width, height, cz)
+	assert bay["pitch_x"] > bay["w"], "drive bays overlap"
+
+	# the opening must leave a frame: a bezel with no metal around the hole is not a
+	# chassis, and a negative-width strip is not a box
+	open_w = min(bay["pitch_x"] * bay["bays"] + 8 * MM, width - 76 * MM)
+	open_h = min(bay["pitch_z"] * bay["rows"] + 6 * MM, height - 8 * MM)
+	open_cx = bay["x0"] + bay["pitch_x"] * (bay["bays"] - 1) / 2
+	left = open_cx - open_w / 2
+	right = open_cx + open_w / 2
+	top = cz + open_h / 2
+	bottom = cz - open_h / 2
+
+	plate = {"-Y": "steel"}
+	b.box((left + width / 2, front, height), ((-width / 2 + left) / 2, front / 2, cz),
+	      "steel_dark", bevel=0.8 * MM, mat_faces=plate)
+	b.box((width / 2 - right, front, height), ((right + width / 2) / 2, front / 2, cz),
+	      "steel_dark", bevel=0.8 * MM, mat_faces=plate)
+	rail = cz + height / 2 - top
+	b.box((open_w, front, rail), (open_cx, front / 2, (top + cz + height / 2) / 2),
+	      "steel_dark", bevel=min(0.8 * MM, rail * 0.4), mat_faces=plate)
+	b.box((open_w, front, rail), (open_cx, front / 2, (bottom + cz - height / 2) / 2),
+	      "steel_dark", bevel=min(0.8 * MM, rail * 0.4), mat_faces=plate)
+
+	# the well sits behind the front plate, inside the opening
+	b.box((open_w - 4 * MM, 20 * MM, open_h - 4 * MM), (open_cx, front + 4 * MM, cz),
+	      "mesh_black", bevel=0.6 * MM)
+
+	for sx in (-1, 1):
+		x = sx * (RACK_PANEL_WIDTH / 2 - 13 * MM)
+		b.box((26 * MM, 5 * MM, height * 0.94), (x, -2.5 * MM, cz), "steel", bevel=0.8 * MM)
+		for sz in ((0,) if units == 1 else (-0.3, 0.3)):
+			b.cyl(3.5 * MM, 4 * MM, (x, -5.5 * MM, cz + sz * height),
+			      "plastic_dark", sides=8, rot=(90, 0, 0))
+
+	for sx in (-1, 1):
+		x = sx * (width / 2 - 14 * MM)
+		b.box((13 * MM, 16 * MM, height * 0.62), (x, -8 * MM, cz), "steel",
+		      bevel=1.5 * MM)
+
+	for r in range(bay["rows"]):
+		for i in range(bay["bays"]):
+			x = bay["x0"] + i * bay["pitch_x"]
+			z = bay["z0"] + r * bay["pitch_z"]
+			bw, bh = bay["w"], bay["h"]
+			# shallow: a deep carrier shadows its neighbours at a glancing angle, so
+			# the row reads as random light patches instead of a row
+			b.box((bw, 9 * MM, bh), (x, 2.5 * MM, z), "steel_dark",
+			      bevel=0.8 * MM, mat_faces={"-Y": "steel"})
 			if units == 1:
-				b.box((bw * 0.42, 3 * MM, bh * 0.72), (x - bw * 0.24, face - 8 * MM, z),
+				b.box((bw * 0.42, 3 * MM, bh * 0.72), (x - bw * 0.24, -3 * MM, z),
 				      "plastic_dark", bevel=0.5 * MM)
 				b.box((4 * MM, 2 * MM, 4 * MM),
-				      (x + bw * 0.20, face - 8 * MM, z - bh * 0.34), "led_green")
+				      (x + bw * 0.20, -3 * MM, z - bh * 0.34), "led_green")
 			else:
-				b.box((bw * 0.16, 3 * MM, bh * 0.62), (x - bw * 0.33, face - 8 * MM, z),
+				b.box((bw * 0.16, 3 * MM, bh * 0.62), (x - bw * 0.33, -3 * MM, z),
 				      "plastic_dark", bevel=0.5 * MM)
 				b.box((4 * MM, 2 * MM, 4 * MM),
-				      (x + bw * 0.30, face - 8 * MM, z + bh * 0.24), "led_green")
+				      (x + bw * 0.30, -3 * MM, z + bh * 0.24), "led_green")
 
 	cx = width / 2 - 40 * MM
-	b.box((24 * MM, 5 * MM, height * 0.8), (cx, face, cz), "plastic_dark", bevel=0.8 * MM)
+	b.box((24 * MM, 6 * MM, height * 0.8), (cx, -3 * MM, cz), "plastic_dark", bevel=0.8 * MM)
 	for i, led in enumerate(("led_green", "led_amber", "led_blue")):
 		b.box((5 * MM, 2 * MM, 5 * MM),
-		      (cx - 9 * MM + i * 9 * MM, face + 2 * MM, cz + height * 0.22), led)
-	b.cyl(5 * MM, 4 * MM, (cx, face, cz - height * 0.18), "plastic_grey", sides=10,
+		      (cx - 9 * MM + i * 9 * MM, -7 * MM, cz + height * 0.22), led)
+	b.cyl(5 * MM, 5 * MM, (cx, -4 * MM, cz - height * 0.18), "plastic_grey", sides=10,
 	      rot=(90, 0, 0))
 
-	b.louvres((16 * MM, height * 0.74, 6 * MM), (-width / 2 + 22 * MM, face - 2 * MM, cz),
+	b.louvres((16 * MM, height * 0.74, 6 * MM), (-width / 2 + 22 * MM, -4 * MM, cz),
 	          max(2, units * 2), "mesh_black")
 
 
@@ -131,10 +162,11 @@ def make_server(units=1, name=None):
 	w = SERVER_WIDTH
 	cz = h / 2
 
-	b.box((w, depth, h), (0, depth / 2, cz), "steel_dark", bevel=1.5 * MM,
-	      mat_faces={"+Z": "steel_dark", "-Y": "steel"})
+	front = 14 * MM
+	b.box((w, depth - front, h), (0, front + (depth - front) / 2, cz), "steel_dark",
+	      bevel=1.5 * MM, mat_faces={"+Z": "steel_dark"})
 
-	_front_panel(b, units, w, h, cz)
+	_front_panel(b, units, w, h, cz, front)
 	b.box((w * 0.98, 10 * MM, h * 0.9), (0, depth - 5 * MM, cz), "mesh_black",
 	      bevel=1.0 * MM)
 

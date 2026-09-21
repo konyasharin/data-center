@@ -1,0 +1,41 @@
+"""Real-world dimensions. Everything in metres; Blender and Godot both use 1 unit = 1 m."""
+
+MM = 0.001
+
+# EIA-310 rack geometry
+U = 44.45 * MM
+RACK_PANEL_WIDTH = 482.6 * MM          # 19"
+RACK_HOLE_SPACING = 465.1 * MM         # centre-to-centre of mounting holes
+RACK_OUTER_WIDTH = 600 * MM
+RACK_OUTER_DEPTH = 1070 * MM
+RACK_PLINTH = 50 * MM
+RACK_ROOF = 40 * MM
+RACK_UNITS_42 = 42
+
+def rack_height(units: int = RACK_UNITS_42) -> float:
+	return RACK_PLINTH + units * U + RACK_ROOF
+
+# Server chassis
+SERVER_WIDTH = 430 * MM
+SERVER_DEPTH = 750 * MM
+SERVER_GAP = 0.75 * MM                 # clearance so neighbouring chassis never z-fight
+
+def server_height(units: int = 1) -> float:
+	return units * U - 2 * SERVER_GAP
+
+# Drive carriers
+LFF_W, LFF_H, LFF_D = 105 * MM, 29 * MM, 150 * MM   # 3.5" in caddy
+SFF_W, SFF_H, SFF_D = 73 * MM, 17 * MM, 105 * MM    # 2.5" in caddy
+
+# Human scale, drives door heights, desk heights, rack reach zones
+HUMAN_HEIGHT = 1.75
+DOOR_W, DOOR_H = 900 * MM, 2050 * MM
+GATE_W, GATE_H = 3000 * MM, 2600 * MM
+DESK_H = 740 * MM
+
+# Phase 1 shed shell (interior clear dimensions)
+SHED_W = 7.2
+SHED_D = 5.4
+SHED_WALL_H = 3.2
+SHED_RIDGE_H = 4.1
+WALL_T = 200 * MM

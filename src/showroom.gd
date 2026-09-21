@@ -28,17 +28,27 @@ const RACK_FRONT_Z := RACK_D / 2
 # the rail, which was leaving the ears buried in the steel.
 const CHASSIS_INSET := 0.081
 
+const SHED_RACK := 100              # rack ids for the shed, out of reach of the hall
+const STRIP_X := 0.25               # outermost PDU strip, from the rack centre
+const STRIP_GAP := 0.07
+
 const HALL := Vector2i(20, 14)      # floor tiles
 const LOD_SWITCH := 9.0              # metres: detailed chassis inside, lod1 beyond
 const SHED_ORIGIN := Vector3(0, 0, 16.0)
 
 var _label_font: Font
+var _wiring: Wiring
+var _hud_label: Label
 
 
 func _ready() -> void:
 	_environment()
+	_wiring = Wiring.new()
+	add_child(_wiring)
 	_hall()
 	_shed()
+	_wiring.build()
+	_prewire()
 	_catalogue()
 	_people()
 	_hud()
@@ -399,7 +409,9 @@ func _hall() -> void:
 		var facing := 0.0 if row == 0 else PI
 		for i in 8:
 			var x := (i - 3.5) * (RACK_W + 0.002)
-			_rack(Vector3(x, PLENUM, z), facing, i)
+			# `i` drives what the cabinet looks like, `id` is who it is: the two rows
+			# must not share ids, or a cord could reach across the aisle
+			_rack(Vector3(x, PLENUM, z), facing, i, row * 8 + i)
 
 	for i in 4:
 		_ceiling_lamp(Vector3((i - 1.5) * 3.0, 3.35, 0))
@@ -460,7 +472,7 @@ func _trays() -> void:
 	_fill(hanger, hang_tf)
 
 
-func _rack(at: Vector3, yaw: float, index: int) -> void:
+func _rack(at: Vector3, yaw: float, index: int, id: int) -> void:
 	var basis := Basis(Vector3.UP, yaw)
 	var root := Node3D.new()
 	root.transform = Transform3D(basis, at)
@@ -490,14 +502,26 @@ func _rack(at: Vector3, yaw: float, index: int) -> void:
 	rear.rotation.y = PI
 	root.add_child(rear)
 
-	var pdu := Assets.instance("hardware/pdu_strip")
-	pdu.position = Vector3(RACK_W / 2 - 0.08, PLINTH + 0.1, -RACK_FRONT_Z + 0.1)
-	root.add_child(pdu)
+	# Six 0U strips, three per feed: one 16-outlet strip does not feed forty servers,
+	# and the two supplies have to be reachable from the same spot for the choice
+	# between them to be a choice at all.
+	var strips := _multimesh("hardware/pdu_strip", root)
+	var strip_tf: Array[Transform3D] = []
+	var entry: Dictionary = _wiring.rack(id, Transform3D(basis, at))
+	for i in 3:
+		for hand in [-1, 1]:
+			var pos := Vector3(hand * (STRIP_X - i * STRIP_GAP), PLINTH + 0.1,
+				-RACK_FRONT_Z + 0.07)
+			# turned to face the hot aisle, where the person patching is standing
+			strip_tf.append(Transform3D(Basis(Vector3.UP, PI), pos))
+			_wiring.add_strip(entry, pos,
+				Wiring.FeedId.A if hand < 0 else Wiring.FeedId.B)
+	_fill(strips, strip_tf)
 
-	_populate(root, index)
+	_populate(root, index, entry)
 
 
-func _populate(root: Node3D, index: int) -> void:
+func _populate(root: Node3D, index: int, entry: Dictionary) -> void:
 	## One MultiMesh per rack: a hall of 8400 chassis cannot be 8400 nodes.
 	# Chassis LED pips are 4 mm: past a few metres they are sub-pixel and crawl as the
 	# camera moves. Visibility ranges swap in the LOD mesh, which is the L0/L1 split
@@ -534,21 +558,34 @@ func _populate(root: Node3D, index: int) -> void:
 	while slot < 41:
 		var y := PLINTH + slot * U + 0.001
 		var here := Transform3D(Basis(), Vector3(0, y, face_z))
+		# A chassis is modelled from its bottom edge, every flat panel from its middle.
+		# Placing both at the slot line drops the panels half a U into their neighbour.
+		var centred := Transform3D(Basis(), Vector3(0, y + U * 0.5, face_z))
+		# Switch and patch panel face the hot aisle: their ports belong on the side
+		# the power is on, or patching means walking round the rack for every cord.
+		var turned := Transform3D(Basis(Vector3.UP, PI),
+			Vector3(0, y + U * 0.5, -face_z))
 		if slot == 40:
-			patch_tf.append(here)
+			patch_tf.append(turned)
+			_wiring.add_panel(entry, Vector3(0, y + U * 0.5, -face_z - 0.004),
+				Wiring.Kind.PATCH, 24, 0.36, 0.0)
 		elif slot == 39 or slot == 36:
-			manager_tf.append(here)
+			manager_tf.append(centred)
 		elif slot == 38 or slot == 37:
-			switch_tf.append(here)
+			switch_tf.append(turned)
+			_wiring.add_panel(entry, Vector3(0, y + U * 0.5, -face_z - 0.004),
+				Wiring.Kind.SWITCH, 24, 0.36, 0.020)
 		elif index % 3 == 2 and slot >= 6 and slot <= 9:
 			if slot == 6:
 				big_tf.append(here)
+				_wiring.add_server(entry, Vector3(0, y, face_z), U * 4.0, 0.75)
 			slot += 1
 			continue
 		elif slot * 100 / 41 < fill * 100 / 42:
 			server_tf.append(here)
+			_wiring.add_server(entry, Vector3(0, y, face_z), U, 0.75)
 		else:
-			blank_tf.append(here)
+			blank_tf.append(centred)
 		slot += 1
 
 	_fill(servers, server_tf)
@@ -598,7 +635,19 @@ func _shed() -> void:
 		front.position = Vector3(-RACK_W / 2, 0.01, RACK_FRONT_Z + 0.004)
 		front.rotation.y = deg_to_rad(-95 if i == 1 else 0)
 		rack.add_child(front)
-		_populate(rack, i)
+		# phase-1 racks are numbered away from the hall so nothing reaches between the
+		# two rooms; the shed is left unpatched on purpose, it is where you start
+		var entry: Dictionary = _wiring.rack(SHED_RACK + i,
+			Transform3D(Basis(), rack.position + SHED_ORIGIN))
+		var strips := _multimesh("hardware/pdu_strip", rack)
+		var strip_tf: Array[Transform3D] = []
+		for hand in [-1, 1]:
+			var pos := Vector3(hand * STRIP_X, PLINTH + 0.1, -RACK_FRONT_Z + 0.07)
+			strip_tf.append(Transform3D(Basis(Vector3.UP, PI), pos))
+			_wiring.add_strip(entry, pos,
+				Wiring.FeedId.A if hand < 0 else Wiring.FeedId.B)
+		_fill(strips, strip_tf)
+		_populate(rack, i, entry)
 
 	_place(shed, "furniture/desk", Vector3(2.0, 0, 1.2), PI * 0.5)
 	_place(shed, "terminal/laptop_base", Vector3(2.0, 0.74, 1.2), PI * 0.5)
@@ -769,17 +818,40 @@ func _find_player(root: Node) -> AnimationPlayer:
 
 # ---------------------------------------------------------------------- hud
 
+func _prewire() -> void:
+	## Some racks come already patched so the hall reads as a working room, and the
+	## rest are left bare for the player. Rack 5 was done by a technician who was
+	## having a bad morning — it looks the same until a feed goes down.
+	for entry in _wiring.racks():
+		if int(entry["index"]) >= SHED_RACK:
+			continue
+		match int(entry["index"]):
+			2, 3:
+				continue
+			5:
+				_wiring.wire_rack(entry, 4, 7)
+			_:
+				_wiring.wire_rack(entry)
+	_wiring.clear_message()
+
+
 func _hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
-	var label := Label.new()
-	label.text = ("WASD move   Shift run   Space jump   F fly   Esc release mouse   Q quit"
-		+ "\nhall ahead · shed behind you · catalogue to the left")
-	label.position = Vector2(16, 12)
-	label.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0))
-	label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
-	label.add_theme_constant_override("outline_size", 6)
-	layer.add_child(label)
+	_hud_label = Label.new()
+	_hud_label.position = Vector2(16, 12)
+	_hud_label.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0))
+	_hud_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	_hud_label.add_theme_constant_override("outline_size", 6)
+	layer.add_child(_hud_label)
+
+
+func _process(_delta: float) -> void:
+	if _hud_label == null:
+		return
+	_hud_label.text = ("WASD ходить · Shift бег · F полёт · Esc мышь · Q выход"
+		+ "\nстойки 2 и 3 не разведены — патчить с задней стороны"
+		+ "\n" + _wiring.hud_text())
 
 
 # ------------------------------------------------------------------ helpers

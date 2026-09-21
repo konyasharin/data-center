@@ -25,6 +25,17 @@ public static class RackWiring
 	public static WiringReport WireRack(CablingState state, ReadOnlySpan<int> servers,
 		int pduA, int pduB, int uplink, int mistakeIn = 0, uint seed = 1)
 	{
+		return WireRack(state, servers, stackalloc int[] { pduA }, stackalloc int[] { pduB },
+			stackalloc int[] { uplink }, mistakeIn, seed);
+	}
+
+	/// <summary>A real rack runs several PDU strips per feed and more than one switch,
+	/// because one 16-outlet strip does not feed forty servers. Each side is tried in
+	/// order and the first one with a socket left wins.</summary>
+	public static WiringReport WireRack(CablingState state, ReadOnlySpan<int> servers,
+		ReadOnlySpan<int> feedA, ReadOnlySpan<int> feedB, ReadOnlySpan<int> uplinks,
+		int mistakeIn = 0, uint seed = 1)
+	{
 		int wired = 0, power = 0, network = 0, mistakes = 0, shortOfPorts = 0, refused = 0;
 		uint rng = seed == 0 ? 1u : seed;
 
@@ -40,8 +51,8 @@ public static class RackWiring
 
 			// alternate which feed is taken first, so a half-wired rack is still
 			// balanced across the two supplies
-			int first = (i & 1) == 0 ? pduA : pduB;
-			int second = (i & 1) == 0 ? pduB : pduA;
+			ReadOnlySpan<int> first = (i & 1) == 0 ? feedA : feedB;
+			ReadOnlySpan<int> second = (i & 1) == 0 ? feedB : feedA;
 			if (slipKind == 1)
 			{
 				second = first;   // both inlets on one feed: works until that feed drops
@@ -51,9 +62,9 @@ public static class RackWiring
 			int inlets = slipKind == 0 ? 1 : 2;
 			for (int inlet = 0; inlet < inlets; inlet++)
 			{
-				int target = inlet == 0 ? first : second;
+				ReadOnlySpan<int> target = inlet == 0 ? first : second;
 				int serverPort = state.FindFreePort(server, LineKind.Power);
-				int pduPort = state.FindFreePort(target, LineKind.Power);
+				int pduPort = FreePortIn(state, target, LineKind.Power);
 				if (serverPort < 0 || pduPort < 0)
 				{
 					shortOfPorts++;
@@ -73,7 +84,7 @@ public static class RackWiring
 			if (slipKind != 2)
 			{
 				int serverPort = state.FindFreePort(server, LineKind.Network);
-				int switchPort = state.FindFreePort(uplink, LineKind.Network);
+				int switchPort = FreePortIn(state, uplinks, LineKind.Network);
 				if (serverPort < 0 || switchPort < 0)
 				{
 					shortOfPorts++;
@@ -98,6 +109,19 @@ public static class RackWiring
 		}
 
 		return new WiringReport(wired, power, network, mistakes, shortOfPorts, refused);
+	}
+
+	private static int FreePortIn(CablingState state, ReadOnlySpan<int> devices, LineKind line)
+	{
+		foreach (int device in devices)
+		{
+			int port = state.FindFreePort(device, line);
+			if (port >= 0)
+			{
+				return port;
+			}
+		}
+		return -1;
 	}
 
 	/// <summary>xorshift32: small, allocation-free and repeatable, which matters

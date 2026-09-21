@@ -34,12 +34,12 @@ EXPECTED_HEIGHT = {
 	"drive_lff": (LFF_H, 0.002),
 }
 
-BUDGET = {"server_1u": 3000, "rack_42u_frame": 9000, "worker": 5000, "shed_shell": 9000}
+BUDGET = {"server_1u": 1600, "rack_42u_frame": 9000, "worker": 5000, "shed_shell": 9000}
 
 # One atlas material batches everything; a model may add detail maps for perforation
 # and one-off materials for glass and the terminal screen. Anything else is a slip.
 ALLOWED_MATERIALS = {
-	"dc_atlas", "dc_perforation", "dc_rail_holes", "dc_floor_grille",
+	"dc_atlas", "dc_perforation", "dc_rail_holes", "dc_floor_grille", "dc_drive_bays",
 	"rack_glass", "terminal_screen",
 }
 

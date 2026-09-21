@@ -123,25 +123,11 @@ def _front_panel(b, units, width, height, cz, front=14 * MM):
 		b.box((13 * MM, 16 * MM, height * 0.62), (x, -8 * MM, cz), "steel",
 		      bevel=1.5 * MM)
 
-	for r in range(bay["rows"]):
-		for i in range(bay["bays"]):
-			x = bay["x0"] + i * bay["pitch_x"]
-			z = bay["z0"] + r * bay["pitch_z"]
-			bw, bh = bay["w"], bay["h"]
-			# shallow: a deep carrier shadows its neighbours at a glancing angle, so
-			# the row reads as random light patches instead of a row
-			b.box((bw, 9 * MM, bh), (x, 2.5 * MM, z), "steel_dark",
-			      bevel=0.8 * MM, mat_faces={"-Y": "steel"})
-			if units == 1:
-				b.box((bw * 0.42, 3 * MM, bh * 0.72), (x - bw * 0.24, -3 * MM, z),
-				      "plastic_dark", bevel=0.5 * MM)
-				b.box((4 * MM, 2 * MM, 4 * MM),
-				      (x + bw * 0.20, -3 * MM, z - bh * 0.34), "led_green")
-			else:
-				b.box((bw * 0.16, 3 * MM, bh * 0.62), (x - bw * 0.33, -3 * MM, z),
-				      "plastic_dark", bevel=0.5 * MM)
-				b.box((4 * MM, 2 * MM, 4 * MM),
-				      (x + bw * 0.30, -3 * MM, z + bh * 0.24), "led_green")
+	# the carrier row is a map, not 40 boxes: see dclib/textures.drive_bays
+	b.detail((open_w - 3 * MM, 5 * MM, open_h - 3 * MM), (open_cx, 1.5 * MM, cz),
+	         texture="dc_drive_bays",
+	         tile=(bay["pitch_x"], bay["pitch_z"] if bay["rows"] > 1 else open_h - 3 * MM),
+	         plane="XZ")
 
 	cx = width / 2 - 40 * MM
 	b.box((24 * MM, 6 * MM, height * 0.8), (cx, -3 * MM, cz), "plastic_dark", bevel=0.8 * MM)
@@ -170,11 +156,18 @@ def make_server(units=1, name=None):
 	b.box((w * 0.98, 10 * MM, h * 0.9), (0, depth - 5 * MM, cz), "mesh_black",
 	      bevel=1.0 * MM)
 
+	# PSUs are the same dark grey as the chassis. In steel_light they were the
+	# brightest thing in the hot aisle and read as random patches down the row —
+	# real supplies are black with a coloured latch, nothing more
 	for sx in (-1, 1):
 		b.box((w * 0.22, 14 * MM, h * 0.62), (sx * w * 0.33, depth - 7 * MM, cz),
-		      "steel_light", bevel=1.0 * MM)
+		      "steel_dark", bevel=1.0 * MM)
 		b.cyl(h * 0.22, 6 * MM, (sx * w * 0.33, depth - 12 * MM, cz), "mesh_black",
 		      sides=10, rot=(90, 0, 0))
+		b.box((w * 0.05, 4 * MM, h * 0.30), (sx * w * 0.22, depth - 16 * MM, cz),
+		      "paint_red", bevel=0.6 * MM)
+		b.box((3 * MM, 2 * MM, 3 * MM), (sx * w * 0.22, depth - 18 * MM, cz + h * 0.22),
+		      "led_green")
 	b.box((w * 0.3, 10 * MM, h * 0.45), (0, depth - 5 * MM, cz), "plastic_dark",
 	      bevel=0.8 * MM)
 

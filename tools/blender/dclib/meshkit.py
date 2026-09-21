@@ -185,10 +185,11 @@ class Builder:
 
 	def detail(self, size, at=(0, 0, 0), texture="dc_perforation", tile=0.12,
 	           rot=None, bevel=0.0, plane="XZ"):
+		"""`tile` is metres per texture repeat, either one value or (u, v)."""
 		"""Box carrying a tiling detail map instead of a palette texel.
 
-		Used for perforation and grilles: as geometry each hole is ~40 triangles, as
-		an alpha map the whole door is two. UVs are planar in metres, so the hole
+		Used for perforation, grilles and drive bays: as geometry each hole is ~40
+		triangles, as a map the whole door is two. UVs are planar in metres, so the
 		pitch stays constant whatever the panel size.
 		"""
 		if texture not in self.detail_slots:
@@ -207,11 +208,12 @@ class Builder:
 
 		faces = self._fresh(before)
 		axes = {"XZ": (0, 2), "XY": (0, 1), "YZ": (1, 2)}[plane]
+		tile_u, tile_v = tile if isinstance(tile, (tuple, list)) else (tile, tile)
 		for f in faces:
 			f.material_index = slot
 			for loop in f.loops:
 				co = loop.vert.co
-				loop[self.uv].uv = (co[axes[0]] / tile, co[axes[1]] / tile)
+				loop[self.uv].uv = (co[axes[0]] / tile_u, co[axes[1]] / tile_v)
 		self._place(list({v for f in faces for v in f.verts}), at, rot)
 		return faces
 

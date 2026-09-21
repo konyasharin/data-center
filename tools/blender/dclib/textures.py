@@ -91,7 +91,48 @@ def panel_wear(name="dc_panel_wear", base=0.5):
 	return _write(_new_image(name), px)
 
 
+def drive_bays(name="dc_drive_bays"):
+	"""One drive bay, tiled across the chassis opening.
+
+	As geometry a carrier row is ~40 small boxes per server whose top faces catch the
+	ceiling lights and read as loose bright patches down a dark aisle. Painted into a
+	map the row is two triangles and stays flat under any light.
+	"""
+	def px(u, v):
+		gap_u, gap_v = 0.07, 0.10
+		if u < gap_u or u > 1 - gap_u or v < gap_v or v > 1 - gap_v:
+			return (0.035, 0.037, 0.040, 1.0)          # recess between carriers
+		iu = (u - gap_u) / (1 - 2 * gap_u)
+		iv = (v - gap_v) / (1 - 2 * gap_v)
+		if iu < 0.30:                                   # latch
+			shade = 0.10 if iu > 0.06 else 0.05
+			return (shade, shade, shade * 1.05, 1.0)
+		if 0.62 < iu < 0.78 and 0.10 < iv < 0.24:       # activity LED
+			return (0.20, 0.62, 0.30, 1.0)
+		face = 0.30 + 0.04 * (1.0 - iv)
+		if iv > 0.86 or iv < 0.08:
+			face *= 0.82                                # rolled edge of the carrier
+		return (face, face * 1.01, face * 1.05, 1.0)
+
+	return _write(_new_image(name, 64, 96), px)
+
+
+def drive_bays_emission(name="dc_drive_bays_emit"):
+	def px(u, v):
+		gap_u, gap_v = 0.07, 0.10
+		if gap_u < u < 1 - gap_u and gap_v < v < 1 - gap_v:
+			iu = (u - gap_u) / (1 - 2 * gap_u)
+			iv = (v - gap_v) / (1 - 2 * gap_v)
+			if 0.62 < iu < 0.78 and 0.10 < iv < 0.24:
+				return (0.21, 0.76, 0.35, 1.0)
+		return (0.0, 0.0, 0.0, 1.0)
+
+	return _write(_new_image(name, 64, 96), px)
+
+
 BUILDERS = {
+	"dc_drive_bays": drive_bays,
+	"dc_drive_bays_emit": drive_bays_emission,
 	"dc_perforation": perforation,
 	"dc_rail_holes": rail_holes,
 	"dc_floor_grille": floor_grille,
@@ -99,11 +140,13 @@ BUILDERS = {
 }
 
 
-def build_material(name, alpha=True, roughness=0.55, metallic=0.7):
+def build_material(name, alpha=None, roughness=0.55, metallic=0.7):
 	mat = bpy.data.materials.get(name)
 	if mat is not None:
 		return mat
 
+	if alpha is None:
+		alpha = name not in OPAQUE
 	img = BUILDERS[name](name)
 	mat = bpy.data.materials.new(name)
 	mat.use_nodes = True
@@ -124,10 +167,24 @@ def build_material(name, alpha=True, roughness=0.55, metallic=0.7):
 	tex.extension = "REPEAT"
 	tex.location = (-250, 0)
 	nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+
+	if name in EMISSIVE:
+		emit = nt.nodes.new("ShaderNodeTexImage")
+		emit.image = BUILDERS[EMISSIVE[name]](EMISSIVE[name])
+		emit.interpolation = "Linear"
+		emit.extension = "REPEAT"
+		emit.location = (-250, -300)
+		nt.links.new(emit.outputs["Color"], bsdf.inputs["Emission Color"])
+		bsdf.inputs["Emission Strength"].default_value = 1.6
+
 	if alpha:
 		nt.links.new(tex.outputs["Alpha"], bsdf.inputs["Alpha"])
 		mat.blend_method = "CLIP" if hasattr(mat, "blend_method") else mat.blend_method
 	return mat
+
+
+OPAQUE = {"dc_drive_bays", "dc_drive_bays_emit", "dc_panel_wear"}
+EMISSIVE = {"dc_drive_bays": "dc_drive_bays_emit"}
 
 
 def save_all(directory):

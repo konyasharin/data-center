@@ -102,9 +102,15 @@ func _check_models() -> void:
 		for node in _walk(root):
 			if node is MeshInstance3D and node.mesh != null:
 				surfaces += node.mesh.get_surface_count()
-				if node.mesh.get_surface_count() > 1:
-					failures.append("%s: %d surfaces, batching expects one" %
+				if node.mesh.get_surface_count() > 3:
+					failures.append("%s: %d surfaces is too many draw calls" %
 						[path.get_file(), node.mesh.get_surface_count()])
+				for i in node.mesh.get_surface_count():
+					var sm: Material = node.mesh.surface_get_material(i)
+					var key: String = sm.resource_name if sm != null else ""
+					if not Assets.MATERIALS.has(key):
+						failures.append("%s: surface %d has unbound material '%s'" %
+							[path.get_file(), i, key])
 		root.free()
 		count += 1
 	print("models: %d files, %d surfaces total" % [count, surfaces])

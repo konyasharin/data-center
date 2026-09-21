@@ -203,13 +203,9 @@ def make_rack_frame(units=42, name=None):
 			x = sx * (RACK_PANEL_WIDTH / 2 + RAIL_W / 2)
 			y = sy * (d / 2 - 90 * MM)
 			b.box((RAIL_W, RAIL_T, rail_h), (x, y, rail_z), mat, bevel=1.5 * MM)
-			if sy < 0:
-				for i in range(units):
-					hz = inner_bottom + (i + 0.5) * U
-					b.box((9 * MM, 4 * MM, 9 * MM), (x, y - RAIL_T / 2 + 1 * MM, hz),
-					      "mesh_black", bevel=0.5 * MM)
-					b.box((3 * MM, 2 * MM, 2 * MM),
-					      (x - sx * 14 * MM, y - RAIL_T / 2, hz), "label")
+			b.detail((RAIL_W * 0.7, 1.5 * MM, rail_h), (x, y - sy * (RAIL_T / 2 + 0.5 * MM),
+			                                            rail_z),
+			         texture="dc_rail_holes", tile=U, plane="XZ")
 
 	b.box((44 * MM, 44 * MM, units * U * 0.8),
 	      (w / 2 - 80 * MM, d / 2 - 100 * MM, inner_bottom + units * U * 0.45),
@@ -233,31 +229,61 @@ def make_rack_door(units=42, kind="front", name=None):
 
 	b.frame((w, h, t), 42 * MM, (cx, 0, h / 2), "rack_black", axis="Y", bevel=2.5 * MM)
 
-	if kind == "front":
-		inner_w, inner_h = w - 84 * MM, h - 84 * MM
-		b.box((inner_w, 6 * MM, inner_h), (cx, 0, h / 2), "mesh_black", bevel=1 * MM)
-		cols, rows = 7, max(8, units // 3)
-		for i in range(1, cols):
-			b.box((5 * MM, 10 * MM, inner_h), (cx - inner_w / 2 + i * inner_w / cols, -3 * MM,
-			                                   h / 2), "rack_black", bevel=0.8 * MM)
-		for j in range(1, rows):
-			b.box((inner_w, 10 * MM, 5 * MM), (cx, -3 * MM,
-			                                   j * inner_h / rows + 42 * MM), "rack_black",
-			      bevel=0.8 * MM)
-		b.box((90 * MM, 16 * MM, 26 * MM), (w - 34 * MM, -14 * MM, h * 0.48), "alu_brushed",
-		      bevel=2 * MM)
-		b.cyl(9 * MM, 22 * MM, (w - 34 * MM, -22 * MM, h * 0.48), "alu", sides=10,
-		      rot=(90, 0, 0))
-		b.box((120 * MM, 3 * MM, 40 * MM), (cx, -t / 2 - 1 * MM, h - 120 * MM), "label")
-	else:
-		b.box((w - 84 * MM, 8 * MM, h - 84 * MM), (cx, 0, h / 2), "rack_black", bevel=1 * MM)
-		b.louvres((w - 120 * MM, h - 140 * MM, 8 * MM), (cx, -2 * MM, h / 2),
-		          max(10, units // 2), "mesh_black")
+	inner_w, inner_h = w - 84 * MM, h - 84 * MM
+	if kind != "glass":
+		b.detail((inner_w, 3 * MM, inner_h), (cx, 0, h / 2), texture="dc_perforation",
+		         tile=26 * MM, plane="XZ")
+		# inner stiffeners: the sheet is 3 mm, the door has to read as a door from inside
+		for j in (0.28, 0.72):
+			b.box((inner_w, 14 * MM, 22 * MM), (cx, 9 * MM, 42 * MM + inner_h * j),
+			      "rack_black", bevel=2 * MM)
 
-	for sz in (0.12, 0.88):
-		b.cyl(12 * MM, 60 * MM, (6 * MM, 0, h * sz), "steel", sides=10)
+	handle_x = w - 40 * MM
+	b.box((36 * MM, 22 * MM, 150 * MM), (handle_x, -11 * MM, h * 0.48), "rack_black",
+	      bevel=3 * MM)
+	b.box((16 * MM, 74 * MM, 26 * MM), (handle_x, -46 * MM, h * 0.48), "alu_brushed",
+	      bevel=4 * MM)
+	b.cyl(11 * MM, 14 * MM, (handle_x, -14 * MM, h * 0.48 - 92 * MM), "alu", sides=12,
+	      rot=(90, 0, 0))
+	b.cyl(4 * MM, 3 * MM, (handle_x, -21 * MM, h * 0.48 - 92 * MM), "mesh_black", sides=8,
+	      rot=(90, 0, 0))
+
+	if kind != "rear":
+		b.box((150 * MM, 3 * MM, 44 * MM), (cx, -t / 2 - 1 * MM, h - 96 * MM), "label")
+		b.box((26 * MM, 3 * MM, 26 * MM), (cx - 96 * MM, -t / 2 - 1 * MM, h - 96 * MM),
+		      "paint_blue")
+		for i in range(3):
+			b.box((70 * MM, 2 * MM, 16 * MM), (w - 120 * MM, -t / 2 - 1 * MM,
+			                                   140 * MM + i * 26 * MM), "label")
+	else:
+		b.box((64 * MM, 3 * MM, 30 * MM), (cx, -t / 2 - 1 * MM, h - 96 * MM), "label")
+
+	for sz in (0.10, 0.50, 0.90):
+		b.cyl(13 * MM, 64 * MM, (6 * MM, 0, h * sz), "steel", sides=12)
+		b.cyl(5 * MM, 76 * MM, (6 * MM, 0, h * sz), "alu", sides=8)
 
 	obj = b.finish(name or f"rack_{units}u_door_{kind}")
+	return obj
+
+
+def make_rack_glass(units=42, name=None):
+	"""Separate object so Godot can give it a transparent material; the smoked pane
+	over a lit rack is most of what a modern cabinet looks like."""
+	b = Builder()
+	w, total = RACK_OUTER_WIDTH, rack_height(units)
+	h = total - 20 * MM
+	b.box((w - 84 * MM, 5 * MM, h - 84 * MM), (w / 2, 0, h / 2), "glass", bevel=1 * MM)
+	obj = b.finish(name or f"rack_{units}u_glass")
+
+	mat = bpy.data.materials.new("rack_glass")
+	mat.use_nodes = True
+	bsdf = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+	bsdf.inputs["Base Color"].default_value = (0.05, 0.06, 0.07, 1.0)
+	bsdf.inputs["Roughness"].default_value = 0.08
+	bsdf.inputs["Metallic"].default_value = 0.0
+	bsdf.inputs["Alpha"].default_value = 0.25
+	obj.data.materials.clear()
+	obj.data.materials.append(mat)
 	return obj
 
 
@@ -302,6 +328,8 @@ def main():
 	frame = emit(make_rack_frame(42))
 	door_f = emit(make_rack_door(42, "front"))
 	door_r = emit(make_rack_door(42, "rear"))
+	emit(make_rack_door(42, "glass"))
+	emit(make_rack_glass(42))
 	side = emit(make_rack_side(42))
 	emit(make_rack_lod(42, 1))
 	emit(make_rack_lod(42, 2))

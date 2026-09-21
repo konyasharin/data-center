@@ -10,7 +10,7 @@ import bmesh
 import bpy
 from mathutils import Euler, Vector
 
-from . import palette
+from . import palette, textures
 
 AXES = {
 	"+X": Vector((1, 0, 0)),
@@ -29,6 +29,7 @@ class Builder:
 		self.deform = None
 		self.groups = []
 		self.active_group = None
+		self.detail_slots = []  # extra materials, in slot order after the atlas
 
 	def part(self, group):
 		"""Bind everything built from here on to one bone. Weights live in the bmesh,
@@ -179,6 +180,38 @@ class Builder:
 				out += self.box((d, w, slat), (at[0], at[1], z), mat, bevel=bevel, rot=(0, 18, 0))
 		return out
 
+	def detail(self, size, at=(0, 0, 0), texture="dc_perforation", tile=0.12,
+	           rot=None, bevel=0.0, plane="XZ"):
+		"""Box carrying a tiling detail map instead of a palette texel.
+
+		Used for perforation and grilles: as geometry each hole is ~40 triangles, as
+		an alpha map the whole door is two. UVs are planar in metres, so the hole
+		pitch stays constant whatever the panel size.
+		"""
+		if texture not in self.detail_slots:
+			self.detail_slots.append(texture)
+		slot = self.detail_slots.index(texture) + 1
+
+		before = self._snapshot()
+		cube = bmesh.ops.create_cube(self.bm, size=1.0)
+		verts = cube["verts"]
+		bmesh.ops.scale(self.bm, vec=Vector(size), verts=verts)
+		if bevel > 0:
+			edges = {e for v in verts for e in v.link_edges}
+			bmesh.ops.bevel(self.bm, geom=list(verts) + list(edges),
+			                offset=min(bevel, min(size) * 0.45), segments=1,
+			                profile=0.5, affect="EDGES", clamp_overlap=True)
+
+		faces = self._fresh(before)
+		axes = {"XZ": (0, 2), "XY": (0, 1), "YZ": (1, 2)}[plane]
+		for f in faces:
+			f.material_index = slot
+			for loop in f.loops:
+				co = loop.vert.co
+				loop[self.uv].uv = (co[axes[0]] / tile, co[axes[1]] / tile)
+		self._place(list({v for f in faces for v in f.verts}), at, rot)
+		return faces
+
 	# --- composition -----------------------------------------------------
 
 	def stamp(self, other, at=(0, 0, 0), rot=None, scale=None):
@@ -218,6 +251,8 @@ class Builder:
 		obj = bpy.data.objects.new(name, me)
 		(collection or bpy.context.scene.collection).objects.link(obj)
 		me.materials.append(palette.build_material())
+		for slot in self.detail_slots:
+			me.materials.append(textures.build_material(slot))
 		for group in self.groups:
 			obj.vertex_groups.new(name=group)
 

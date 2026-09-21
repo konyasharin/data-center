@@ -1,0 +1,10 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[resource]
+resource_name = "rack_glass"
+transparency = 1
+albedo_color = Color(0.07, 0.08, 0.09, 0.32)
+metallic = 0.1
+metallic_specular = 0.9
+roughness = 0.06
+cull_mode = 2

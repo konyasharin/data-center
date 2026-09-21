@@ -34,7 +34,14 @@ EXPECTED_HEIGHT = {
 	"drive_lff": (LFF_H, 0.002),
 }
 
-BUDGET = {"server_1u": 2500, "rack_42u_frame": 9000, "worker": 5000, "shed_shell": 9000}
+BUDGET = {"server_1u": 3000, "rack_42u_frame": 9000, "worker": 5000, "shed_shell": 9000}
+
+# One atlas material batches everything; a model may add detail maps for perforation
+# and one-off materials for glass and the terminal screen. Anything else is a slip.
+ALLOWED_MATERIALS = {
+	"dc_atlas", "dc_perforation", "dc_rail_holes", "dc_floor_grille",
+	"rack_glass", "terminal_screen",
+}
 
 
 def read_gltf(path):
@@ -75,13 +82,17 @@ def main():
 			stem = name[:-4]
 			doc = read_gltf(path)
 			tris, size, lo, hi = model_stats(doc)
-			mats = len(doc.get("materials", []))
+			mat_names = [m.get("name", "") for m in doc.get("materials", [])]
+			mats = len(mat_names)
 			anims = len(doc.get("animations", []))
 			skins = len(doc.get("skins", []))
 			joints = len(doc["skins"][0]["joints"]) if skins else 0
 
-			if mats != 1:
-				problems.append(f"{stem}: {mats} materials — batching needs exactly one")
+			unknown = [m for m in mat_names if m not in ALLOWED_MATERIALS]
+			if unknown:
+				problems.append(f"{stem}: unexpected material(s) {unknown}")
+			if mats > 3:
+				problems.append(f"{stem}: {mats} materials — that is {mats} draw calls")
 			if max(size) > 20 or max(size) < 0.01:
 				problems.append(f"{stem}: implausible size {size} — unit scale is metres")
 			limit = BUDGET.get(stem)

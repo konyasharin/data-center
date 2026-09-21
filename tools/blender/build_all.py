@@ -15,22 +15,21 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bpy
 
-from dclib import exporter, palette
+from dclib import exporter, palette, textures
 
-BUILDERS = ["build_rack", "build_shed", "build_props", "build_worker"]
+BUILDERS = ["build_rack", "build_shed", "build_room", "build_props", "build_worker"]
 
 
 def main():
 	started = time.time()
 	for name in BUILDERS:
 		print(f"\n########## {name} ##########")
-		module = importlib.import_module(name)
-		importlib.reload(module)
-		module.main()
+		importlib.import_module(name).main()
 
 	bpy.ops.wm.read_factory_settings(use_empty=True)
 	paths = palette.save_images(os.path.join(exporter.REPO, "assets", "palettes"))
-	print("\npalette maps: " + ", ".join(os.path.basename(p) for p in paths))
+	paths += textures.save_all(os.path.join(exporter.REPO, "assets", "textures"))
+	print("\nmaps: " + ", ".join(os.path.basename(p) for p in paths))
 
 	total = 0
 	count = 0

@@ -18,6 +18,16 @@ const RACK_H := 1.957
 const U := 0.04445
 const PLINTH := 0.05
 
+# Models are authored with -Y as the front (docs/14-art-assets.md). The glTF export
+# maps Blender -Y to +Z, so in Godot a rack's front face is at +Z and a chassis body
+# runs from its origin toward -Z. Getting this backwards parks every server outside
+# the cabinet, which is exactly what happened.
+const RACK_FRONT_Z := RACK_D / 2
+# Chassis ears land on the front face of the mounting rail (rail centre is 90 mm in,
+# 18 mm thick), so the bezel sits 81 mm behind the cabinet face rather than inside
+# the rail, which was leaving the ears buried in the steel.
+const CHASSIS_INSET := 0.081
+
 const HALL := Vector2i(20, 14)      # floor tiles
 const LOD_SWITCH := 9.0              # metres: detailed chassis inside, lod1 beyond
 const SHED_ORIGIN := Vector3(0, 0, 16.0)
@@ -230,6 +240,24 @@ static func _flag_material() -> StandardMaterial3D:
 	return mat
 
 
+func _assert_inside(rack: Node3D, transforms: Array[Transform3D], m: Mesh,
+                    label: String) -> void:
+	## Everything mounted in a cabinet has to fit inside it. Getting the front axis
+	## backwards parked whole stacks outside the rack, and nothing in the pipeline
+	## complained — a scene is geometry too, and deserves the same checking as a model.
+	if m == null or transforms.is_empty():
+		return
+	var cabinet := AABB(Vector3(-RACK_W / 2, 0, -RACK_D / 2),
+		Vector3(RACK_W, RACK_H, RACK_D)).grow(0.01)
+	for tf in transforms:
+		var box := tf * m.get_aabb()
+		if not cabinet.encloses(box):
+			push_error("%s at %v sticks out of the cabinet (%v .. %v vs %v .. %v)" %
+				[label, tf.origin, box.position, box.end,
+				 cabinet.position, cabinet.end])
+			return
+
+
 func _tint(mmi: MultiMeshInstance3D, colour: Color) -> void:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = colour
@@ -366,7 +394,7 @@ func _hall() -> void:
 	# two rows facing each other across a cold aisle
 	for row in 2:
 		var z := (-1.0 if row == 0 else 1.0) * 1.5
-		var facing := PI if row == 0 else 0.0
+		var facing := 0.0 if row == 0 else PI
 		for i in 8:
 			var x := (i - 3.5) * (RACK_W + 0.002)
 			_rack(Vector3(x, PLENUM, z), facing, i)
@@ -445,7 +473,7 @@ func _rack(at: Vector3, yaw: float, index: int) -> void:
 	var glazed := index % 2 == 1
 	var front := Assets.instance(
 		"hardware/rack_42u_door_glass" if glazed else "hardware/rack_42u_door_front")
-	front.position = Vector3(-RACK_W / 2, 0.01, -RACK_D / 2 - 0.004)
+	front.position = Vector3(-RACK_W / 2, 0.01, RACK_FRONT_Z + 0.004)
 	# one rack stands open, the way it looks when someone is working in it
 	front.rotation.y = deg_to_rad(-100 if index == 2 else 0)
 	root.add_child(front)
@@ -456,12 +484,12 @@ func _rack(at: Vector3, yaw: float, index: int) -> void:
 		root.add_child(pane)
 
 	var rear := Assets.instance("hardware/rack_42u_door_rear")
-	rear.position = Vector3(RACK_W / 2, 0.01, RACK_D / 2 + 0.004)
+	rear.position = Vector3(RACK_W / 2, 0.01, -RACK_FRONT_Z - 0.004)
 	rear.rotation.y = PI
 	root.add_child(rear)
 
 	var pdu := Assets.instance("hardware/pdu_strip")
-	pdu.position = Vector3(RACK_W / 2 - 0.08, PLINTH + 0.1, RACK_D / 2 - 0.1)
+	pdu.position = Vector3(RACK_W / 2 - 0.08, PLINTH + 0.1, -RACK_FRONT_Z + 0.1)
 	root.add_child(pdu)
 
 	_populate(root, index)
@@ -498,7 +526,7 @@ func _populate(root: Node3D, index: int) -> void:
 	var switch_tf: Array[Transform3D] = []
 	var manager_tf: Array[Transform3D] = []
 
-	var face_z := -RACK_D / 2 + 0.09
+	var face_z := RACK_FRONT_Z - CHASSIS_INSET
 	var fill: int = [34, 30, 38, 26, 40, 22][index % 6]
 	var slot := 1
 	while slot < 41:
@@ -523,6 +551,8 @@ func _populate(root: Node3D, index: int) -> void:
 
 	_fill(servers, server_tf)
 	_fill(servers_far, server_tf)
+	_assert_inside(root, server_tf, Assets.mesh("hardware/server_1u"), "server_1u")
+	_assert_inside(root, big_tf, Assets.mesh("hardware/server_4u"), "server_4u")
 
 	if "--rainbow" in OS.get_cmdline_user_args():
 		_tint(servers, Color(1, 0.1, 0.1))
@@ -563,7 +593,7 @@ func _shed() -> void:
 		shed.add_child(rack)
 		rack.add_child(Assets.instance("hardware/rack_42u_frame"))
 		var front := Assets.instance("hardware/rack_42u_door_front")
-		front.position = Vector3(-RACK_W / 2, 0.01, -RACK_D / 2 - 0.004)
+		front.position = Vector3(-RACK_W / 2, 0.01, RACK_FRONT_Z + 0.004)
 		front.rotation.y = deg_to_rad(-95 if i == 1 else 0)
 		rack.add_child(front)
 		_populate(rack, i)

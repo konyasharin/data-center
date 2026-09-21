@@ -29,6 +29,17 @@ static func material(name: String) -> Material:
 	return _materials[name]
 
 
+static func multimesh_safe(m: Mesh, path: String) -> bool:
+	## A MultiMesh only renders the mesh's first surface. A model with a detail map on
+	## surface 1 therefore loses it silently — which looks like an artefact, not like a
+	## missing feature, and cost a long hunt once already.
+	if m != null and m.get_surface_count() > 1:
+		push_error("%s has %d surfaces; a MultiMesh will only draw the first" %
+			[path, m.get_surface_count()])
+		return false
+	return true
+
+
 static func mesh(path: String) -> Mesh:
 	## `path` is relative to assets/models, without the extension: "hardware/server_1u".
 	if _meshes.has(path):

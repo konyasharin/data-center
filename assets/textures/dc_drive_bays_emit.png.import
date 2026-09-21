@@ -3,20 +3,19 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://djv5fsmuhiw1j"
-path.s3tc="res://.godot/imported/dc_drive_bays_emit.png-334db5a590185c3176257b815ed2113f.s3tc.ctex"
+path="res://.godot/imported/dc_drive_bays_emit.png-334db5a590185c3176257b815ed2113f.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
-"vram_texture": true
+"vram_texture": false
 }
 
 [deps]
 
 source_file="res://assets/textures/dc_drive_bays_emit.png"
-dest_files=["res://.godot/imported/dc_drive_bays_emit.png-334db5a590185c3176257b815ed2113f.s3tc.ctex"]
+dest_files=["res://.godot/imported/dc_drive_bays_emit.png-334db5a590185c3176257b815ed2113f.ctex"]
 
 [params]
 
-compress/mode=2
+compress/mode=0
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -32,7 +31,7 @@ process/channel_remap/red=0
 process/channel_remap/green=1
 process/channel_remap/blue=2
 process/channel_remap/alpha=3
-process/fix_alpha_border=true
+process/fix_alpha_border=false
 process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false

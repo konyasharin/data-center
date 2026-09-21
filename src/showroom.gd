@@ -94,6 +94,40 @@ func _flicker() -> void:
 		for key in ["dc_perforation", "dc_rail_holes", "dc_floor_grille"]:
 			var m: StandardMaterial3D = Assets.material(key)
 			m.alpha_antialiasing_mode = BaseMaterial3D.ALPHA_ANTIALIASING_OFF
+	if "--probe" in args:
+		# same mesh as a plain MeshInstance3D, right in front of the camera: if the
+		# drive-bay surface shows here but not in the MultiMesh rows, the MultiMesh
+		# is the reason
+		var probe := Assets.instance("hardware/server_1u")
+		probe.position = Vector3(-0.35, 1.72, 0.55)
+		probe.rotation.y = PI
+		probe.scale = Vector3(1.6, 1.6, 1.6)
+		add_child(probe)
+	if "--nodetail" in args:
+		# flag every detail-map surface so it is unmistakable on screen
+		var seen: Dictionary = {}
+		var flagged := 0
+		for node in _walk(self):
+			var m: Mesh = null
+			if node is MeshInstance3D:
+				m = node.mesh
+			elif node is MultiMeshInstance3D:
+				m = node.multimesh.mesh
+			if m == null or seen.has(m):
+				continue
+			seen[m] = true
+			for i in range(1, m.get_surface_count()):
+				m.surface_set_material(i, _flag_material())
+				flagged += 1
+		print("flagged detail surfaces: ", flagged, " on ", seen.size(), " meshes")
+	if "--noshadow" in args:
+		for node in _walk(self):
+			if node is Light3D:
+				node.shadow_enabled = false
+	if "--nossao" in args:
+		for node in _walk(self):
+			if node is WorldEnvironment:
+				node.environment.ssao_enabled = false
 	if "--nopeople" in args:
 		for node in _walk(self):
 			if node is AnimationPlayer:
@@ -114,6 +148,53 @@ func _flicker() -> void:
 
 
 func _shoot() -> void:
+	var args := OS.get_cmdline_user_args()
+	if "--probe" in args:
+		# same mesh as a plain MeshInstance3D, right in front of the camera: if the
+		# drive-bay surface shows here but not in the MultiMesh rows, the MultiMesh
+		# is the reason
+		var probe := Assets.instance("hardware/server_1u")
+		probe.position = Vector3(-0.35, 1.72, 0.55)
+		probe.rotation.y = PI
+		probe.scale = Vector3(1.6, 1.6, 1.6)
+		add_child(probe)
+	if "--nodetail" in args:
+		# flag every detail-map surface so it is unmistakable on screen
+		var seen: Dictionary = {}
+		var flagged := 0
+		for node in _walk(self):
+			var m: Mesh = null
+			if node is MeshInstance3D:
+				m = node.mesh
+			elif node is MultiMeshInstance3D:
+				m = node.multimesh.mesh
+			if m == null or seen.has(m):
+				continue
+			seen[m] = true
+			for i in range(1, m.get_surface_count()):
+				m.surface_set_material(i, _flag_material())
+				flagged += 1
+		print("flagged detail surfaces: ", flagged, " on ", seen.size(), " meshes")
+	if "--noshadow" in args:
+		for node in _walk(self):
+			if node is Light3D:
+				node.shadow_enabled = false
+	if "--nossao" in args:
+		for node in _walk(self):
+			if node is WorldEnvironment:
+				node.environment.ssao_enabled = false
+
+	var modes := {
+		"unshaded": Viewport.DEBUG_DRAW_UNSHADED,
+		"lighting": Viewport.DEBUG_DRAW_LIGHTING,
+		"normals": Viewport.DEBUG_DRAW_NORMAL_BUFFER,
+		"wireframe": Viewport.DEBUG_DRAW_WIREFRAME,
+		"overdraw": Viewport.DEBUG_DRAW_OVERDRAW,
+	}
+	for key in modes:
+		if "--" + key in args:
+			get_viewport().debug_draw = modes[key]
+
 	var camera := Camera3D.new()
 	camera.fov = 70
 	camera.far = 300
@@ -132,6 +213,13 @@ func _shoot() -> void:
 		img.save_png("%s/%s.png" % [dir, shot[0]])
 		print("shot: ", ProjectSettings.globalize_path(dir), "/", shot[0], ".png")
 	get_tree().quit()
+
+
+static func _flag_material() -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1, 0, 1)
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	return mat
 
 
 func _tint(mmi: MultiMeshInstance3D, colour: Color) -> void:
@@ -353,7 +441,7 @@ func _rack(at: Vector3, yaw: float, index: int) -> void:
 	# one rack stands open, the way it looks when someone is working in it
 	front.rotation.y = deg_to_rad(-100 if index == 2 else 0)
 	root.add_child(front)
-	if glazed:
+	if glazed and not ("--noglass" in OS.get_cmdline_user_args()):
 		var pane := Assets.instance("hardware/rack_42u_glass")
 		pane.position = front.position
 		pane.rotation = front.rotation
@@ -657,6 +745,7 @@ func _multimesh(path: String, parent: Node = null) -> MultiMeshInstance3D:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.mesh = Assets.mesh(path)
+	Assets.multimesh_safe(mm.mesh, path)
 	mmi.multimesh = mm
 	(parent if parent != null else self).add_child(mmi)
 	return mmi

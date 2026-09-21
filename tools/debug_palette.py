@@ -20,7 +20,9 @@ sys.path.insert(0, os.path.join(REPO, "tools", "blender"))
 from dclib.palette import ATLAS, SLOTS  # noqa: E402 - needs the path above
 
 TARGET = os.path.join(REPO, "assets", "palettes", "dc_atlas_albedo.png")
-HUE_STEP = 0.137
+# golden-ratio step: consecutive slots land far apart on the wheel, so a hue read
+# back from a screenshot cannot be confused with its neighbour
+HUE_STEP = 0.61803399
 
 
 def _chunk(tag, data):

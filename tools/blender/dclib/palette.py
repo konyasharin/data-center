@@ -4,7 +4,10 @@ UVs point at texel centres, so no filter mode can bleed neighbours into a face.
 Recolouring the game is then a texture swap, not a re-export.
 """
 
-import bpy
+try:
+	import bpy
+except ImportError:  # the slot table has to be readable outside Blender
+	bpy = None
 
 ATLAS = 16  # texels per side
 
@@ -25,7 +28,7 @@ SLOTS = [
 	("alu", 0x8C9299, 0.55, 0.52, 0.0),
 	("alu_brushed", 0x6B7178, 0.35, 0.64, 0.0),
 	("rack_black", 0x1A1D20, 0.10, 0.72, 0.0),
-	("mesh_black", 0x0C0D0F, 0.50, 0.70, 0.0),
+	("mesh_black", 0x1C1F23, 0.20, 0.72, 0.0),
 	("plastic_dark", 0x1A1B1E, 0.00, 0.60, 0.0),
 	("plastic_grey", 0x55585C, 0.00, 0.55, 0.0),
 	("plastic_white", 0xC6C9CC, 0.00, 0.52, 0.0),

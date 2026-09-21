@@ -5,6 +5,7 @@
 
 [resource]
 resource_name = "dc_drive_bays"
+cull_mode = 2
 texture_filter = 5
 albedo_texture = ExtResource("1")
 metallic = 0.2

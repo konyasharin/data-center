@@ -123,11 +123,22 @@ def _front_panel(b, units, width, height, cz, front=14 * MM):
 		b.box((13 * MM, 16 * MM, height * 0.62), (x, -8 * MM, cz), "steel",
 		      bevel=1.5 * MM)
 
-	# the carrier row is a map, not 40 boxes: see dclib/textures.drive_bays
-	b.detail((open_w - 3 * MM, 5 * MM, open_h - 3 * MM), (open_cx, 1.5 * MM, cz),
-	         texture="dc_drive_bays",
-	         tile=(bay["pitch_x"], bay["pitch_z"] if bay["rows"] > 1 else open_h - 3 * MM),
-	         plane="XZ")
+	# Carriers are flat palette quads, not a detail map and not boxes.
+	#
+	# Not boxes: their top faces caught the ceiling lights and read as bright patches.
+	# Not a detail map: a chassis is drawn through a MultiMesh, and a MultiMesh only
+	# renders the mesh's first surface — the map silently never appeared, leaving the
+	# dark well showing through in torn wedges. Flat quads on the atlas stay on
+	# surface 0 and have no relief to catch light.
+	for r in range(bay["rows"]):
+		for i in range(bay["bays"]):
+			x = bay["x0"] + i * bay["pitch_x"]
+			z = bay["z0"] + r * bay["pitch_z"]
+			b.quad((bay["w"], bay["h"]), (x, 1.0 * MM, z), "steel", facing=-1)
+			b.quad((bay["w"] * 0.26, bay["h"] * 0.74), (x - bay["w"] * 0.30, 0.6 * MM, z),
+			       "plastic_dark", facing=-1)
+			b.quad((3.5 * MM, 3.5 * MM), (x + bay["w"] * 0.24, 0.4 * MM,
+			                              z - bay["h"] * 0.3), "led_green", facing=-1)
 
 	cx = width / 2 - 40 * MM
 	b.box((24 * MM, 6 * MM, height * 0.8), (cx, -3 * MM, cz), "plastic_dark", bevel=0.8 * MM)
@@ -171,7 +182,7 @@ def make_server(units=1, name=None):
 	b.box((w * 0.3, 10 * MM, h * 0.45), (0, depth - 5 * MM, cz), "plastic_dark",
 	      bevel=0.8 * MM)
 
-	return b.finish(name or f"server_{units}u")
+	return b.finish(name or f"server_{units}u", smooth_angle=0.0)
 
 
 def make_server_lod(units=1, level=1):
@@ -228,9 +239,8 @@ def make_rack_frame(units=42, name=None):
 			x = sx * (RACK_PANEL_WIDTH / 2 + RAIL_W / 2)
 			y = sy * (d / 2 - 90 * MM)
 			b.box((RAIL_W, RAIL_T, rail_h), (x, y, rail_z), mat, bevel=1.5 * MM)
-			b.detail((RAIL_W * 0.7, 1.5 * MM, rail_h), (x, y - sy * (RAIL_T / 2 + 1.5 * MM),
-			                                            rail_z),
-			         texture="dc_rail_holes", tile=U, plane="XZ")
+			b.detail((RAIL_W * 0.7, rail_h), (x, y - sy * (RAIL_T / 2 + 1.5 * MM), rail_z),
+			         texture="dc_rail_holes", tile=U, plane="XZ", facing=-sy)
 
 	b.box((44 * MM, 44 * MM, units * U * 0.8),
 	      (w / 2 - 80 * MM, d / 2 - 100 * MM, inner_bottom + units * U * 0.45),
@@ -256,8 +266,8 @@ def make_rack_door(units=42, kind="front", name=None):
 
 	inner_w, inner_h = w - 84 * MM, h - 84 * MM
 	if kind != "glass":
-		b.detail((inner_w, 3 * MM, inner_h), (cx, 0, h / 2), texture="dc_perforation",
-		         tile=26 * MM, plane="XZ")
+		b.detail((inner_w, inner_h), (cx, 0, h / 2), texture="dc_perforation",
+		         tile=26 * MM, plane="XZ", double_sided=True)
 		# inner stiffeners: the sheet is 3 mm, the door has to read as a door from inside
 		for j in (0.28, 0.72):
 			b.box((inner_w, 14 * MM, 22 * MM), (cx, 9 * MM, 42 * MM + inner_h * j),

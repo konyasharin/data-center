@@ -95,36 +95,43 @@ def drive_bays(name="dc_drive_bays"):
 	"""One drive bay, tiled across the chassis opening.
 
 	As geometry a carrier row is ~40 small boxes per server whose top faces catch the
-	ceiling lights and read as loose bright patches down a dark aisle. Painted into a
-	map the row is two triangles and stays flat under any light.
+	ceiling lights and read as loose bright patches down a dark aisle.
+
+	Contrast inside the tile is deliberately shallow and the edges are ramped over a
+	few texels. A 26 mm band seen from five metres at a glancing angle collapses to
+	two or three pixels: with hard black gaps the mip chain produces torn, crawling
+	wedges, while a soft tile just averages to the mid tone it should be.
 	"""
+	recess, body = 0.16, 0.30
+	ramp = 0.09
+
+	def smooth(edge, value):
+		t = max(0.0, min(1.0, (value - edge) / ramp))
+		return t * t * (3 - 2 * t)
+
 	def px(u, v):
-		gap_u, gap_v = 0.07, 0.10
-		if u < gap_u or u > 1 - gap_u or v < gap_v or v > 1 - gap_v:
-			return (0.035, 0.037, 0.040, 1.0)          # recess between carriers
-		iu = (u - gap_u) / (1 - 2 * gap_u)
-		iv = (v - gap_v) / (1 - 2 * gap_v)
-		if iu < 0.30:                                   # latch
-			shade = 0.10 if iu > 0.06 else 0.05
-			return (shade, shade, shade * 1.05, 1.0)
-		if 0.62 < iu < 0.78 and 0.10 < iv < 0.24:       # activity LED
-			return (0.20, 0.62, 0.30, 1.0)
-		face = 0.30 + 0.04 * (1.0 - iv)
-		if iv > 0.86 or iv < 0.08:
-			face *= 0.82                                # rolled edge of the carrier
-		return (face, face * 1.01, face * 1.05, 1.0)
+		gap_u, gap_v = 0.08, 0.12
+		inside = (smooth(gap_u - ramp, u) * smooth(gap_u - ramp, 1 - u)
+		          * smooth(gap_v - ramp, v) * smooth(gap_v - ramp, 1 - v))
+		shade = recess + (body - recess) * inside
+		iu = (u - gap_u) / max(1e-6, 1 - 2 * gap_u)
+		iv = (v - gap_v) / max(1e-6, 1 - 2 * gap_v)
+		if 0.0 < iu < 0.26 and 0.0 < iv < 1.0:
+			shade -= 0.05 * inside                      # latch, a shade darker
+		if 0.60 < iu < 0.80 and 0.10 < iv < 0.26:
+			return (0.21, 0.42, 0.26, 1.0)              # activity LED
+		return (shade, shade * 1.01, shade * 1.06, 1.0)
 
 	return _write(_new_image(name, 64, 96), px)
 
 
 def drive_bays_emission(name="dc_drive_bays_emit"):
 	def px(u, v):
-		gap_u, gap_v = 0.07, 0.10
-		if gap_u < u < 1 - gap_u and gap_v < v < 1 - gap_v:
-			iu = (u - gap_u) / (1 - 2 * gap_u)
-			iv = (v - gap_v) / (1 - 2 * gap_v)
-			if 0.62 < iu < 0.78 and 0.10 < iv < 0.24:
-				return (0.21, 0.76, 0.35, 1.0)
+		gap_u, gap_v = 0.08, 0.12
+		iu = (u - gap_u) / max(1e-6, 1 - 2 * gap_u)
+		iv = (v - gap_v) / max(1e-6, 1 - 2 * gap_v)
+		if 0.60 < iu < 0.80 and 0.10 < iv < 0.26:
+			return (0.18, 0.62, 0.30, 1.0)
 		return (0.0, 0.0, 0.0, 1.0)
 
 	return _write(_new_image(name, 64, 96), px)

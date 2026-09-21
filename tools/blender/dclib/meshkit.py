@@ -183,37 +183,81 @@ class Builder:
 				out += self.box((d, w, slat), (at[0], at[1], z), mat, bevel=bevel, rot=(0, 18, 0))
 		return out
 
-	def detail(self, size, at=(0, 0, 0), texture="dc_perforation", tile=0.12,
-	           rot=None, bevel=0.0, plane="XZ"):
-		"""`tile` is metres per texture repeat, either one value or (u, v)."""
-		"""Box carrying a tiling detail map instead of a palette texel.
+	def quad(self, size, at=(0, 0, 0), mat="steel", rot=None, plane="XZ", facing=1):
+		"""Flat palette-coloured face. Same shape as detail(), but on the atlas, so it
+		survives being drawn through a MultiMesh."""
+		axes = {"XZ": (0, 2), "XY": (0, 1), "YZ": (1, 2)}[plane]
+		normal_axis = ({0, 1, 2} - set(axes)).pop()
+		corners = []
+		for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+			co = [0.0, 0.0, 0.0]
+			co[axes[0]] = su * size[0] / 2
+			co[axes[1]] = sv * size[1] / 2
+			corners.append(self.bm.verts.new(Vector(co)))
+		face = self.bm.faces.new(corners)
+		self.bm.normal_update()
+		if face.normal[normal_axis] * facing < 0:
+			bmesh.ops.reverse_faces(self.bm, faces=[face])
+		face.tag = True
+		self._paint([face], mat)
+		self._place(list(face.verts), at, rot)
+		return [face]
 
-		Used for perforation, grilles and drive bays: as geometry each hole is ~40
-		triangles, as a map the whole door is two. UVs are planar in metres, so the
-		pitch stays constant whatever the panel size.
+	def detail(self, size, at=(0, 0, 0), texture="dc_perforation", tile=0.12,
+	           rot=None, plane="XZ", double_sided=False, facing=1):
+		"""Flat quad carrying a tiling detail map instead of a palette texel.
+
+		`tile` is metres per texture repeat, either one value or (u, v). `facing` is
+		which way along the plane's normal axis the quad looks: Godot culls back faces,
+		so a panel pointed into the chassis is simply invisible in the engine even
+		though Blender's preview shows it.
+
+		This is a single face on purpose. Built as a box, its *side* faces inherit the
+		same planar UVs, which are degenerate across their thickness: the UV
+		derivatives explode, the GPU picks a far mip, and each side face lights up
+		with the texture's average colour — bright wedges that swap per triangle and
+		crawl as the camera moves. A quad has no side faces to get this wrong.
 		"""
 		if texture not in self.detail_slots:
 			self.detail_slots.append(texture)
 		slot = self.detail_slots.index(texture) + 1
 
-		before = self._snapshot()
-		cube = bmesh.ops.create_cube(self.bm, size=1.0)
-		verts = cube["verts"]
-		bmesh.ops.scale(self.bm, vec=Vector(size), verts=verts)
-		if bevel > 0:
-			edges = {e for v in verts for e in v.link_edges}
-			bmesh.ops.bevel(self.bm, geom=list(verts) + list(edges),
-			                offset=min(bevel, min(size) * 0.45), segments=1,
-			                profile=0.5, affect="EDGES", clamp_overlap=True)
-
-		faces = self._fresh(before)
 		axes = {"XZ": (0, 2), "XY": (0, 1), "YZ": (1, 2)}[plane]
+		normal_axis = ({0, 1, 2} - set(axes)).pop()
+		half = [0.0, 0.0, 0.0]
+		half[axes[0]] = size[0] / 2
+		half[axes[1]] = size[1] / 2
+
+		corners = []
+		for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+			co = [0.0, 0.0, 0.0]
+			co[axes[0]] = su * half[axes[0]]
+			co[axes[1]] = sv * half[axes[1]]
+			corners.append(self.bm.verts.new(Vector(co)))
+
+		faces = [self.bm.faces.new(corners)]
+		if double_sided:
+			flipped = [self.bm.verts.new(v.co) for v in reversed(corners)]
+			faces.append(self.bm.faces.new(flipped))
+
 		tile_u, tile_v = tile if isinstance(tile, (tuple, list)) else (tile, tile)
+		# anchor UVs to the panel's own corner. Dividing raw local coordinates puts the
+		# origin in the middle, which splits the tile across the centre of the panel:
+		# the seam then lands in the visible area and mips tear along it
+		origin_u = -size[0] / 2
+		origin_v = -size[1] / 2
 		for f in faces:
 			f.material_index = slot
 			for loop in f.loops:
 				co = loop.vert.co
-				loop[self.uv].uv = (co[axes[0]] / tile_u, co[axes[1]] / tile_v)
+				loop[self.uv].uv = ((co[axes[0]] - origin_u) / tile_u,
+				                    (co[axes[1]] - origin_v) / tile_v)
+		self.bm.normal_update()
+		if faces[0].normal[normal_axis] * facing < 0:
+			bmesh.ops.reverse_faces(self.bm, faces=faces[:1])
+		for f in faces:
+			f.tag = True
+
 		self._place(list({v for f in faces for v in f.verts}), at, rot)
 		return faces
 
@@ -246,7 +290,11 @@ class Builder:
 
 	def finish(self, name, smooth_angle=35.0, weld=1e-5, collection=None):
 		bmesh.ops.remove_doubles(self.bm, verts=list(self.bm.verts), dist=weld)
-		bmesh.ops.recalc_face_normals(self.bm, faces=list(self.bm.faces))
+		# recalc orients faces outward from enclosed volume; a lone quad has no volume,
+		# so it gets flipped at random and Godot's back-face culling then hides it —
+		# which reads as a missing panel, not as a normals bug
+		solids = [f for f in self.bm.faces if not f.tag]
+		bmesh.ops.recalc_face_normals(self.bm, faces=solids)
 
 		me = bpy.data.meshes.new(name)
 		self.bm.to_mesh(me)

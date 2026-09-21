@@ -37,8 +37,16 @@ def make_floor_tile(kind="solid"):
 			      bevel=2 * MM)
 			b.box((TILE - 2 * border, border, t), (0, sx * (TILE - border) / 2, -t / 2),
 			      "steel_dark", bevel=2 * MM)
-		b.detail((TILE - 2 * border, TILE - 2 * border, 10 * MM), (0, 0, -t / 2 - 2 * MM),
-		         texture="dc_floor_grille", tile=TILE, plane="XY")
+		# palette geometry, not a detail map: floor tiles are instanced through a
+		# MultiMesh, which only draws the mesh's first surface
+		inner = TILE - 2 * border
+		b.quad((inner, inner), (0, 0, -t / 2 - 2 * MM), "mesh_black", plane="XY")
+		slots = 5
+		bar = inner / (slots * 2 + 1)
+		for i in range(slots + 1):
+			offset = -inner / 2 + i * (inner - bar) / slots
+			b.quad((bar, inner), (offset, 0, -t / 2 - 1 * MM), "steel_dark", plane="XY")
+			b.quad((inner, bar), (0, offset, -t / 2 - 1 * MM), "steel_dark", plane="XY")
 		b.box((TILE - 2 * border - 20 * MM, 22 * MM, 14 * MM), (0, 0, -t + 8 * MM),
 		      "steel_dark", bevel=2 * MM)
 	else:

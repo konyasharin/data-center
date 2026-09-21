@@ -12,6 +12,8 @@ from mathutils import Euler, Vector
 
 from . import palette, textures
 
+MM_ = 0.001
+
 AXES = {
 	"+X": Vector((1, 0, 0)),
 	"-X": Vector((-1, 0, 0)),
@@ -154,19 +156,21 @@ class Builder:
 		w, h, d = size
 		t = thickness
 		out = []
-		# the uprights run the full height and the rails are inset: butting them exactly
-		# leaves coplanar end faces, which flicker in the engine
-		inner = w - 2 * t
+		# Rails run the full width and the uprights overlap into them by 2 mm. Butting
+		# the two flush leaves coplanar end faces at all four corners, and they fight
+		# for depth; an overlap buries the join where nothing can see it.
+		overlap = 2.0 * MM_
+		stile = h - 2 * t + 2 * overlap
 		if axis == "Y":
-			out += self.box((inner, d, t), (at[0], at[1], at[2] + h / 2 - t / 2), mat, bevel=bevel)
-			out += self.box((inner, d, t), (at[0], at[1], at[2] - h / 2 + t / 2), mat, bevel=bevel)
-			out += self.box((t, d, h), (at[0] - w / 2 + t / 2, at[1], at[2]), mat, bevel=bevel)
-			out += self.box((t, d, h), (at[0] + w / 2 - t / 2, at[1], at[2]), mat, bevel=bevel)
+			out += self.box((w, d, t), (at[0], at[1], at[2] + h / 2 - t / 2), mat, bevel=bevel)
+			out += self.box((w, d, t), (at[0], at[1], at[2] - h / 2 + t / 2), mat, bevel=bevel)
+			out += self.box((t, d, stile), (at[0] - w / 2 + t / 2, at[1], at[2]), mat, bevel=bevel)
+			out += self.box((t, d, stile), (at[0] + w / 2 - t / 2, at[1], at[2]), mat, bevel=bevel)
 		else:
-			out += self.box((d, inner, t), (at[0], at[1], at[2] + h / 2 - t / 2), mat, bevel=bevel)
-			out += self.box((d, inner, t), (at[0], at[1], at[2] - h / 2 + t / 2), mat, bevel=bevel)
-			out += self.box((d, t, h), (at[0], at[1] - w / 2 + t / 2, at[2]), mat, bevel=bevel)
-			out += self.box((d, t, h), (at[0], at[1] + w / 2 - t / 2, at[2]), mat, bevel=bevel)
+			out += self.box((d, w, t), (at[0], at[1], at[2] + h / 2 - t / 2), mat, bevel=bevel)
+			out += self.box((d, w, t), (at[0], at[1], at[2] - h / 2 + t / 2), mat, bevel=bevel)
+			out += self.box((d, t, stile), (at[0], at[1] - w / 2 + t / 2, at[2]), mat, bevel=bevel)
+			out += self.box((d, t, stile), (at[0], at[1] + w / 2 - t / 2, at[2]), mat, bevel=bevel)
 		return out
 
 	def louvres(self, size, at, count, mat="mesh_black", axis="Y", bevel=0.0015):

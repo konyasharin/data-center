@@ -24,6 +24,8 @@ from dclib.palette import ATLAS, SLOTS
 MODELS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
                                       "assets", "models"))
 GAP = 0.0012          # faces closer than this along their normal are suspect
+# Exactly coincident faces are NOT excluded: two parts ending on the same plane is
+# the worst z-fighting there is, and skipping them hid the chassis rear for days.
 NORMAL_TOL = 0.02     # dot-product slack for "same direction"
 MIN_AREA = 2e-5       # ignore slivers: bevel strips are not what flickers
 
@@ -82,8 +84,8 @@ def scan(obj):
 				delta = faces[j][0] - faces[i][0]
 				if delta > GAP:
 					break
-				if delta < 1e-6:
-					continue  # exactly coincident is usually one welded surface
+				if delta < 1e-7 and faces[i][3] == faces[j][3]:
+					continue  # one welded surface: same slot, no separation at all
 				if not _overlap(faces[i][1], faces[j][1]):
 					continue
 				if not (_exposed(tree, faces[i][2], faces[i][4])

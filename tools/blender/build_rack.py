@@ -164,41 +164,52 @@ def make_server(units=1, name=None):
 	      bevel=1.5 * MM, mat_faces={"+Z": "steel_dark"})
 
 	_front_panel(b, units, w, h, cz, front)
-	b.box((w * 0.98, 10 * MM, h * 0.9), (0, depth - 5 * MM, cz), "mesh_black",
-	      bevel=1.0 * MM)
 
-	# PSUs are the same dark grey as the chassis. In steel_light they were the
-	# brightest thing in the hot aisle and read as random patches down the row —
-	# real supplies are black with a coloured latch, nothing more
+	# Everything on the rear is inset from the back face. The vent, the PSUs and the
+	# NIC block all used to end exactly on y=depth, coplanar with the chassis back:
+	# three fighting surfaces that tore into wedges across the hot aisle and swapped
+	# with the viewing angle. This is the artefact that survived every other fix.
+	back = depth - 3 * MM
+	b.box((w * 0.98, 10 * MM, h * 0.9), (0, back - 5 * MM, cz), "mesh_black",
+	      bevel=1.0 * MM)
 	for sx in (-1, 1):
-		b.box((w * 0.22, 14 * MM, h * 0.62), (sx * w * 0.33, depth - 7 * MM, cz),
+		b.box((w * 0.22, 14 * MM, h * 0.62), (sx * w * 0.33, back - 9 * MM, cz),
 		      "steel_dark", bevel=1.0 * MM)
-		b.cyl(h * 0.22, 6 * MM, (sx * w * 0.33, depth - 12 * MM, cz), "mesh_black",
+		b.cyl(h * 0.22, 6 * MM, (sx * w * 0.33, back - 14 * MM, cz), "mesh_black",
 		      sides=10, rot=(90, 0, 0))
-		b.box((w * 0.05, 4 * MM, h * 0.30), (sx * w * 0.22, depth - 16 * MM, cz),
+		b.box((w * 0.05, 4 * MM, h * 0.30), (sx * w * 0.22, back - 18 * MM, cz),
 		      "paint_red", bevel=0.6 * MM)
-		b.box((3 * MM, 2 * MM, 3 * MM), (sx * w * 0.22, depth - 18 * MM, cz + h * 0.22),
+		b.box((3 * MM, 2 * MM, 3 * MM), (sx * w * 0.22, back - 20 * MM, cz + h * 0.22),
 		      "led_green")
-	b.box((w * 0.3, 10 * MM, h * 0.45), (0, depth - 5 * MM, cz), "plastic_dark",
+	b.box((w * 0.3, 10 * MM, h * 0.45), (0, back - 7 * MM, cz), "plastic_dark",
 	      bevel=0.8 * MM)
 
 	return b.finish(name or f"server_{units}u", smooth_angle=0.0)
 
 
 def make_server_lod(units=1, level=1):
+	"""Stand-in past the LOD distance. Matched to the detailed chassis on purpose:
+	the switch is a hard swap (fading it dithers two meshes together), so the two
+	have to read the same — same dark body, same lighter carrier band in the same
+	place, just without the per-bay relief."""
 	b = Builder()
 	h = server_height(units)
 	w = SERVER_WIDTH
 	d = SERVER_DEPTH
 	if level == 1:
-		b.box((w, d, h), (0, d / 2, h / 2), "steel_dark", bevel=1.0 * MM,
-		      mat_faces={"-Y": "alu_brushed"})
-		b.box((w * 0.7, 4 * MM, h * 0.5), (-w * 0.08, 1 * MM, h / 2), "steel_dark")
-		b.box((12 * MM, 2 * MM, 3 * MM), (w / 2 - 40 * MM, 1 * MM, h * 0.62), "led_green")
+		b.box((w, d, h), (0, d / 2, h / 2), "steel_dark", bevel=1.0 * MM)
+		bay = _bay_layout(units, w, h, h / 2)
+		band_w = bay["pitch_x"] * bay["bays"]
+		band_h = bay["pitch_z"] * bay["rows"] - 4 * MM
+		b.quad((band_w, band_h),
+		       (bay["x0"] + bay["pitch_x"] * (bay["bays"] - 1) / 2, -0.4 * MM, h / 2),
+		       "steel", facing=-1)
+		for sx in (-1, 1):
+			b.quad((26 * MM, h * 0.9), (sx * (RACK_PANEL_WIDTH / 2 - 13 * MM), -0.4 * MM,
+			                            h / 2), "steel", facing=-1)
 	else:
-		b.box((w, d, h), (0, d / 2, h / 2), "steel_dark", bevel=0.0,
-		      mat_faces={"-Y": "alu_brushed"})
-	return b.finish(f"server_{units}u_lod{level}")
+		b.box((w, d, h), (0, d / 2, h / 2), "steel_dark", bevel=0.0)
+	return b.finish(f"server_{units}u_lod{level}", smooth_angle=0.0)
 
 
 # ---------------------------------------------------------------- rack

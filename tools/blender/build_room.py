@@ -164,13 +164,13 @@ def make_pdu_strip():
 	b = Builder()
 	h = 1.5
 	b.box((46 * MM, 46 * MM, h), (0, 0, h / 2), "plastic_grey", bevel=3 * MM)
-	b.box((36 * MM, 10 * MM, 90 * MM), (0, -26 * MM, h - 70 * MM), "plastic_dark",
+	b.box((36 * MM, 10 * MM, 90 * MM), (0, -25 * MM, h - 70 * MM), "plastic_dark",
 	      bevel=2 * MM)
 	b.box((26 * MM, 3 * MM, 14 * MM), (0, -32 * MM, h - 52 * MM), "screen_on", bevel=1 * MM)
 	for i in range(16):
 		z = 80 * MM + i * (h - 200 * MM) / 15
-		b.cyl(13 * MM, 8 * MM, (0, -25 * MM, z), "plastic_dark", sides=8, rot=(90, 0, 0))
-		b.cyl(3 * MM, 3 * MM, (18 * MM, -25 * MM, z), "led_green", sides=6, rot=(90, 0, 0))
+		b.cyl(13 * MM, 8 * MM, (0, -26 * MM, z), "plastic_dark", sides=8, rot=(90, 0, 0))
+		b.cyl(3 * MM, 3 * MM, (18 * MM, -29 * MM, z), "led_green", sides=6, rot=(90, 0, 0))
 	return b.finish("pdu_strip")
 
 

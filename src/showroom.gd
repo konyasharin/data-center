@@ -19,7 +19,7 @@ const U := 0.04445
 const PLINTH := 0.05
 
 const HALL := Vector2i(20, 14)      # floor tiles
-const LOD_SWITCH := 4.5              # metres: detailed chassis inside, lod1 beyond
+const LOD_SWITCH := 9.0              # metres: detailed chassis inside, lod1 beyond
 const SHED_ORIGIN := Vector3(0, 0, 16.0)
 
 var _label_font: Font
@@ -59,6 +59,11 @@ const SHOTS := [
 	["hall_floor", Vector3(1.8, 0.95, 0.6), Vector3(-1.2, 0.48, 0.0)],
 	["hall_rear", Vector3(3.0, 1.60, -3.2), Vector3(-2.0, 1.30, -2.3)],
 	["rack_face", Vector3(-0.15, 2.05, 0.95), Vector3(-0.95, 1.35, -0.35)],
+	["rear_close", Vector3(-0.30, 1.55, -2.55), Vector3(-1.10, 1.30, -1.95)],
+	["rear_angle", Vector3(0.90, 1.70, -2.90), Vector3(-1.20, 1.25, -2.05)],
+	["lod_near", Vector3(0.55, 1.45, -0.35), Vector3(-0.30, 1.30, -1.00)],
+	["lod_band", Vector3(2.60, 1.60, 1.90), Vector3(-0.60, 1.25, -0.90)],
+	["lod_far", Vector3(4.60, 1.70, 3.40), Vector3(-1.00, 1.20, -1.10)],
 	["rack_row", Vector3(5.2, 1.55, 0.2), Vector3(-2.0, 1.20, -0.4)],
 	["shed_inside", Vector3(2.6, 1.65, 18.4), Vector3(-1.6, 1.2, 16.4)],
 	["shed_terminal", Vector3(2.9, 1.45, 16.4), Vector3(2.0, 0.85, 17.2)],
@@ -86,9 +91,12 @@ func _flicker() -> void:
 			if node is GeometryInstance3D:
 				node.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
 	if "--nolod" in args:
+		# keep only the detailed mesh: zeroing both thresholds would show the LOD mesh
+		# as well, which is exactly the overlap being investigated
 		for node in _walk(self):
 			if node is GeometryInstance3D:
-				node.visibility_range_begin = 0.0
+				if node.visibility_range_begin > 0.0:
+					node.visible = false
 				node.visibility_range_end = 0.0
 	if "--noalpha" in args:
 		for key in ["dc_perforation", "dc_rail_holes", "dc_floor_grille"]:
@@ -466,13 +474,17 @@ func _populate(root: Node3D, index: int) -> void:
 	# from docs/10-tech-architecture.md doing real work rather than an anti-alias hack.
 	var servers := _multimesh("hardware/server_1u", root)
 	var servers_far := _multimesh("hardware/server_1u_lod1", root)
-	# fade across the switch: a hard swap pops the whole rack as you walk up to it
+	# Hard swap, no fade. Godot's visibility-range fade is screen-door dithering:
+	# across the whole margin both meshes draw at once through a stipple pattern,
+	# which on opaque chassis reads as torn dark wedges that crawl as you move. The
+	# margins also overlapped, so the band where both drew was metres wide. The LOD1
+	# mesh is close enough to the detailed one that a hard switch is not noticeable.
 	servers.visibility_range_end = LOD_SWITCH
-	servers.visibility_range_end_margin = 2.5
-	servers.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	servers.visibility_range_end_margin = 0.0
+	servers.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
 	servers_far.visibility_range_begin = LOD_SWITCH
-	servers_far.visibility_range_begin_margin = 2.5
-	servers_far.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	servers_far.visibility_range_begin_margin = 0.0
+	servers_far.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
 	var big := _multimesh("hardware/server_4u", root)
 	var blanks := _multimesh("hardware/blanking_panel_1u", root)
 	var patch := _multimesh("hardware/patch_panel_1u", root)

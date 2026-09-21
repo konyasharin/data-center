@@ -34,7 +34,8 @@ internal static class Demo
 			tops[rack] = state.AddDevice(DeviceKind.Switch, rack, 0, 48);
 		}
 
-		Console.WriteLine($"hall: {racksInRow} racks, {serversPerRack} servers each\n");
+		Console.WriteLine($"hall: {racksInRow} racks, {serversPerRack} servers each");
+		Console.WriteLine();
 
 		// racks 0 and 1 are patched by the player, 2 and 3 by a tired technician
 		for (int rack = 0; rack < racksInRow; rack++)
@@ -47,48 +48,16 @@ internal static class Demo
 				+ $"  slips {report.Mistakes}");
 		}
 
-		Console.WriteLine("\nwhat the panel shows now:");
+		Console.WriteLine();
+		Console.WriteLine("what the panel shows now:");
 		Report(state, servers);
 
-		Console.WriteLine("\n-- feed A goes down for maintenance --\n");
-		for (int rack = 0; rack < racksInRow; rack++)
-		{
-			DropFeed(state, servers[rack], Feed.A);
-		}
+		Console.WriteLine();
+		Console.WriteLine($"-- feed A goes down: {state.DisconnectFeed(Feed.A)} cords out --");
+		Console.WriteLine();
 		Report(state, servers);
-		Console.WriteLine("\nthe racks that looked fine are the ones that stayed up.");
-	}
-
-	private static void DropFeed(CablingState state, int[] servers, Feed feed)
-	{
-		foreach (int server in servers)
-		{
-			for (int i = 0; i < state.PortCountOf(server); i++)
-			{
-				int port = state.PortOf(server, i);
-				if (state.LineOf(port) != LineKind.Power || state.IsFree(port))
-				{
-					continue;
-				}
-				for (int link = 0; link < state.LinkCount; link++)
-				{
-					if (!state.LinkLive(link))
-					{
-						continue;
-					}
-					int a = state.LinkPortA(link), b = state.LinkPortB(link);
-					if (a != port && b != port)
-					{
-						continue;
-					}
-					int other = a == port ? b : a;
-					if (state.FeedOf(state.OwnerOf(other)) == feed)
-					{
-						state.Disconnect(link);
-					}
-				}
-			}
-		}
+		Console.WriteLine();
+		Console.WriteLine("the racks that looked fine are the ones that stayed up.");
 	}
 
 	private static void Report(CablingState state, int[][] racks)

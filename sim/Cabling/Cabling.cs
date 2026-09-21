@@ -17,12 +17,16 @@ public enum LineKind : byte
 }
 
 /// <summary>Which supply path a PDU hangs off. A server with both inlets on the same
-/// feed runs fine until that feed is worked on, which is the whole point.</summary>
+/// feed runs fine until that feed is worked on, which is the whole point.
+///
+/// <c>None</c> is deliberately zero: zeroed memory — a freshly grown array, a
+/// half-read save — must not read as "hangs off feed A", or a maintenance sweep
+/// would take down devices that were never on that feed.</summary>
 public enum Feed : byte
 {
+	None,
 	A,
 	B,
-	None,
 }
 
 public enum ConnectResult : byte
@@ -34,6 +38,7 @@ public enum ConnectResult : byte
 	OutOfReach,
 	NoFreePort,
 	UnknownPort,
+	PowerNeedsPdu,
 }
 
 public enum PowerState : byte
@@ -80,9 +85,17 @@ public sealed class CablingState
 	public int DeviceCount => _deviceCount;
 	public int LinkCount => _linkCount;
 
+	/// <summary>Ports actually handed out. The arrays behind them grow in powers of
+	/// two, so their Length is not the count and a serializer that writes the whole
+	/// array writes garbage.</summary>
+	public int PortTotal => _portCursor;
+
 	public int AddDevice(DeviceKind kind, int rack, int powerPorts, int networkPorts,
 		Feed feed = Feed.None)
 	{
+		ArgumentOutOfRangeException.ThrowIfNegative(powerPorts);
+		ArgumentOutOfRangeException.ThrowIfNegative(networkPorts);
+
 		int id = _deviceCount++;
 		Grow(ref _kind, _deviceCount);
 		Grow(ref _rack, _deviceCount);
@@ -111,18 +124,36 @@ public sealed class CablingState
 		return id;
 	}
 
-	public DeviceKind KindOf(int device) => _kind[device];
-	public int RackOf(int device) => _rack[device];
-	public Feed FeedOf(int device) => _feed[device];
-	public int PortOf(int device, int index) => _portStart[device] + index;
-	public int PortCountOf(int device) => _portCount[device];
-	public LineKind LineOf(int port) => _portLine[port];
-	public int OwnerOf(int port) => _portOwner[port];
-	public bool IsFree(int port) => _portLink[port] == NoLink;
+	// The arrays outlive the counts, so the getters below check against the count and
+	// not against Length. A stale id would otherwise read as a real device standing in
+	// rack 0 — an existing rack — and quietly join whatever sweep is running.
+	public DeviceKind KindOf(int device) => _kind[Device(device)];
+	public int RackOf(int device) => _rack[Device(device)];
+	public Feed FeedOf(int device) => _feed[Device(device)];
+	public int PortCountOf(int device) => _portCount[Device(device)];
+	public LineKind LineOf(int port) => _portLine[Port(port)];
+	public int OwnerOf(int port) => _portOwner[Port(port)];
+	public bool IsFree(int port) => _portLink[Port(port)] == NoLink;
+
+	/// <summary>The link occupying a port, or -1. What the player grabs when they pull
+	/// a cable out of a socket rather than trace it from the far end, and what lets a
+	/// bulk disconnect cost the ports it touches instead of every link in the hall.
+	/// </summary>
+	public int LinkOf(int port) => _portLink[Port(port)];
+
+	public int PortOf(int device, int index)
+	{
+		Device(device);
+		if (index < 0 || index >= _portCount[device])
+		{
+			throw new ArgumentOutOfRangeException(nameof(index));
+		}
+		return _portStart[device] + index;
+	}
 
 	public int FindFreePort(int device, LineKind line)
 	{
-		int start = _portStart[device];
+		int start = _portStart[Device(device)];
 		for (int i = 0; i < _portCount[device]; i++)
 		{
 			int p = start + i;
@@ -136,6 +167,12 @@ public sealed class CablingState
 
 	public ConnectResult CanConnect(int portA, int portB)
 	{
+		// FindFreePort hands back -1, and "the rack is full" is a different sentence
+		// from "that index is nonsense" — the UI has to be able to say which.
+		if (portA == -1 || portB == -1)
+		{
+			return ConnectResult.NoFreePort;
+		}
 		if (portA < 0 || portB < 0 || portA >= _portCursor || portB >= _portCursor)
 		{
 			return ConnectResult.UnknownPort;
@@ -144,7 +181,8 @@ public sealed class CablingState
 		{
 			return ConnectResult.MixedLineKinds;
 		}
-		if (_portOwner[portA] == _portOwner[portB])
+		int deviceA = _portOwner[portA], deviceB = _portOwner[portB];
+		if (deviceA == deviceB)
 		{
 			return ConnectResult.SameDevice;
 		}
@@ -152,7 +190,15 @@ public sealed class CablingState
 		{
 			return ConnectResult.PortOccupied;
 		}
-		return WithinReach(_portOwner[portA], _portOwner[portB], _portLine[portA])
+		// Power has to come from a PDU. Without this, a server patched into the server
+		// beside it passes every other check and both of them then report being fed,
+		// while neither is on a supply.
+		if (_portLine[portA] == LineKind.Power
+			&& (_kind[deviceA] == DeviceKind.Pdu) == (_kind[deviceB] == DeviceKind.Pdu))
+		{
+			return ConnectResult.PowerNeedsPdu;
+		}
+		return WithinReach(deviceA, deviceB, _portLine[portA])
 			? ConnectResult.Ok
 			: ConnectResult.OutOfReach;
 	}
@@ -191,8 +237,39 @@ public sealed class CablingState
 	}
 
 	public bool LinkLive(int link) => link >= 0 && link < _linkCount && _linkLive[link];
-	public int LinkPortA(int link) => _linkA[link];
-	public int LinkPortB(int link) => _linkB[link];
+	public int LinkPortA(int link) => LinkLive(link) ? _linkA[link] : -1;
+	public int LinkPortB(int link) => LinkLive(link) ? _linkB[link] : -1;
+
+	/// <summary>The far end of whatever is plugged into this port, or -1.</summary>
+	public int OtherEnd(int port)
+	{
+		int link = _portLink[Port(port)];
+		return link == NoLink ? -1 : _linkA[link] == port ? _linkB[link] : _linkA[link];
+	}
+
+	/// <summary>Takes a whole supply path down, which is what a maintenance window
+	/// does. Walked from the PDUs, so it costs the outlets on that feed rather than
+	/// every link in the hall.</summary>
+	public int DisconnectFeed(Feed feed)
+	{
+		int pulled = 0;
+		for (int device = 0; device < _deviceCount; device++)
+		{
+			if (_kind[device] != DeviceKind.Pdu || _feed[device] != feed)
+			{
+				continue;
+			}
+			int start = _portStart[device];
+			for (int i = 0; i < _portCount[device]; i++)
+			{
+				if (Disconnect(_portLink[start + i]))
+				{
+					pulled++;
+				}
+			}
+		}
+		return pulled;
+	}
 
 	/// <summary>Power stays inside its own rack; network may reach a neighbouring one.
 	/// Anything further needs a switch in the rack, which is how a player works out
@@ -205,7 +282,7 @@ public sealed class CablingState
 
 	public ServerStatus StatusOf(int server)
 	{
-		int start = _portStart[server];
+		int start = _portStart[Device(server)];
 		bool onFeedA = false, onFeedB = false;
 		int inlets = 0;
 		bool online = false;
@@ -214,7 +291,7 @@ public sealed class CablingState
 		{
 			int port = start + i;
 			int link = _portLink[port];
-			if (link == NoLink || !_linkLive[link])
+			if (link == NoLink)
 			{
 				continue;
 			}
@@ -223,6 +300,10 @@ public sealed class CablingState
 
 			if (_portLine[port] == LineKind.Power)
 			{
+				if (_kind[otherDevice] != DeviceKind.Pdu)
+				{
+					continue;
+				}
 				inlets++;
 				if (_feed[otherDevice] == Feed.A) onFeedA = true;
 				if (_feed[otherDevice] == Feed.B) onFeedB = true;
@@ -236,7 +317,28 @@ public sealed class CablingState
 		PowerState power = inlets == 0
 			? PowerState.Unpowered
 			: onFeedA && onFeedB ? PowerState.Redundant : PowerState.SinglePath;
-		return new ServerStatus(power, online, inlets >= 2 && !(onFeedA && onFeedB));
+		// Two inlets on one *known* feed. Two inlets into a PDU that is itself on no
+		// feed is a different mistake, and calling it this one would send the player
+		// looking at the wrong thing.
+		return new ServerStatus(power, online, inlets >= 2 && (onFeedA ^ onFeedB));
+	}
+
+	private int Device(int device)
+	{
+		if (device < 0 || device >= _deviceCount)
+		{
+			throw new ArgumentOutOfRangeException(nameof(device));
+		}
+		return device;
+	}
+
+	private int Port(int port)
+	{
+		if (port < 0 || port >= _portCursor)
+		{
+			throw new ArgumentOutOfRangeException(nameof(port));
+		}
+		return port;
 	}
 
 	private static void Grow<T>(ref T[] array, int needed)
@@ -245,7 +347,7 @@ public sealed class CablingState
 		{
 			return;
 		}
-		int size = Math.Max(8, array.Length == 0 ? 8 : array.Length * 2);
+		int size = Math.Max(8, array.Length * 2);
 		while (size < needed)
 		{
 			size *= 2;

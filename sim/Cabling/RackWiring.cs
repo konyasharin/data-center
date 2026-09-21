@@ -5,7 +5,8 @@ public readonly record struct WiringReport(
 	int PowerLinks,
 	int NetworkLinks,
 	int Mistakes,
-	int OutOfPorts);
+	int OutOfPorts,
+	int Refused);
 
 /// <summary>
 /// "Wire the rack" as one action.
@@ -24,7 +25,7 @@ public static class RackWiring
 	public static WiringReport WireRack(CablingState state, ReadOnlySpan<int> servers,
 		int pduA, int pduB, int uplink, int mistakeIn = 0, uint seed = 1)
 	{
-		int wired = 0, power = 0, network = 0, mistakes = 0, shortOfPorts = 0;
+		int wired = 0, power = 0, network = 0, mistakes = 0, shortOfPorts = 0, refused = 0;
 		uint rng = seed == 0 ? 1u : seed;
 
 		for (int i = 0; i < servers.Length; i++)
@@ -46,6 +47,7 @@ public static class RackWiring
 				second = first;   // both inlets on one feed: works until that feed drops
 			}
 
+			int madeHere = 0;
 			int inlets = slipKind == 0 ? 1 : 2;
 			for (int inlet = 0; inlet < inlets; inlet++)
 			{
@@ -60,6 +62,11 @@ public static class RackWiring
 				if (state.Connect(serverPort, pduPort, out _) == ConnectResult.Ok)
 				{
 					power++;
+					madeHere++;
+				}
+				else
+				{
+					refused++;
 				}
 			}
 
@@ -74,13 +81,23 @@ public static class RackWiring
 				else if (state.Connect(serverPort, switchPort, out _) == ConnectResult.Ok)
 				{
 					network++;
+					madeHere++;
+				}
+				else
+				{
+					refused++;
 				}
 			}
 
-			wired++;
+			// A server nothing could be attached to is not a wired server. Counting it
+			// as one let a report say "all 20 done" for a rack with no outlets left.
+			if (madeHere > 0)
+			{
+				wired++;
+			}
 		}
 
-		return new WiringReport(wired, power, network, mistakes, shortOfPorts);
+		return new WiringReport(wired, power, network, mistakes, shortOfPorts, refused);
 	}
 
 	/// <summary>xorshift32: small, allocation-free and repeatable, which matters

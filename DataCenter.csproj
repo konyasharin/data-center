@@ -1,0 +1,19 @@
+<Project Sdk="Godot.NET.Sdk/4.7.0">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <RootNamespace>DataCenter</RootNamespace>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!-- The Godot SDK globs **/*.cs, which would pull the simulation core into the
+       engine assembly and quietly erase the boundary docs/10 draws. The core comes
+       in as a reference instead, built on its own and testable without a scene. -->
+  <ItemGroup>
+    <Compile Remove="sim/**/*.cs" />
+    <Compile Remove="tests/**/*.cs" />
+    <ProjectReference Include="sim/DataCenter.Sim.csproj" />
+  </ItemGroup>
+
+</Project>

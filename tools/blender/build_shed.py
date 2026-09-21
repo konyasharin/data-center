@@ -80,12 +80,15 @@ def _truss(b, y, span, wall_h, ridge_h, drop):
 	length = math.hypot(half, rise)
 	pitch = math.degrees(math.atan2(rise, half))
 
-	b.box((span, 90 * MM, 70 * MM), (0, y, wall_h + 35 * MM), "steel", bevel=4 * MM)
-	b.box((80 * MM, 80 * MM, apex - wall_h), (0, y, (wall_h + apex) / 2), "steel", bevel=4 * MM)
+	# every member gets its own width: equal widths put their side faces in the same
+	# plane at each joint, and the whole truss shimmers
+	b.box((span, 96 * MM, 70 * MM), (0, y, wall_h + 35 * MM), "steel", bevel=4 * MM)
+	b.box((74 * MM, 74 * MM, apex - wall_h), (0, y, (wall_h + apex) / 2), "steel", bevel=4 * MM)
 	for sx in (-1, 1):
-		b.box((length, 80 * MM, 90 * MM), (sx * half / 2, y, (wall_h + apex) / 2),
+		b.box((length, 86 * MM, 90 * MM), (sx * half / 2, y, (wall_h + apex) / 2),
 		      "steel", bevel=4 * MM, rot=(0, sx * pitch, 0))
-		b.box((length * 0.5, 60 * MM, 60 * MM), (sx * half * 0.52, y, wall_h + rise * 0.16),
+		b.box((length * 0.5, 30 * MM, 60 * MM),
+		      (sx * half * 0.52, y + sx * 62 * MM, wall_h + rise * 0.16),
 		      "steel", bevel=3 * MM, rot=(0, -sx * pitch * 1.4, 0))
 
 
@@ -107,8 +110,12 @@ def make_shell():
 		(DOOR_X + DOOR_W / 2, w / 2),
 	]
 	for x0, x1 in segments:
-		if x1 - x0 > 1 * MM:
-			_wall(b, x1 - x0, ((x0 + x1) / 2, front_y, 0), "X")
+		# extend into the side wall where a segment reaches the corner: a flush butt
+		# joint leaves two coplanar faces
+		a = x0 - WALL_T * 0.6 if abs(x0 + w / 2) < 1 * MM else x0
+		z = x1 + WALL_T * 0.6 if abs(x1 - w / 2) < 1 * MM else x1
+		if z - a > 1 * MM:
+			_wall(b, z - a, ((a + z) / 2, front_y, 0), "X")
 	b.box((GATE_W, WALL_T, SHED_WALL_H - GATE_H), (GATE_X, front_y,
 	                                               GATE_H + (SHED_WALL_H - GATE_H) / 2),
 	      "wall_panel_dark", bevel=6 * MM, mat_faces={"-Y": "wall_panel"})
@@ -118,7 +125,7 @@ def make_shell():
 	b.box((GATE_W + 120 * MM, WALL_T + 40 * MM, 160 * MM), (GATE_X, front_y, GATE_H + 80 * MM),
 	      "steel", bevel=5 * MM)
 
-	_wall(b, w, (0, (d + WALL_T) / 2, 0), "X", rib_side=1)
+	_wall(b, w + 1.2 * WALL_T, (0, (d + WALL_T) / 2, 0), "X", rib_side=1)
 	for sx in (-1, 1):
 		side_x = sx * (w + WALL_T) / 2
 		band_z = WINDOW_SILL
@@ -128,8 +135,8 @@ def make_shell():
 		      height=SHED_WALL_H - band_z - WINDOW_H, rib_side=sx)
 		for i in range(3):
 			y = -d / 2 + d * (i + 0.5) / 3
-			b.box((WALL_T * 0.5, d / 3 - 200 * MM, WINDOW_H), (side_x, y, band_z + WINDOW_H / 2),
-			      "glass", bevel=4 * MM)
+			b.box((WALL_T * 0.42, d / 3 - 212 * MM, WINDOW_H - 12 * MM),
+			      (side_x, y, band_z + WINDOW_H / 2), "glass", bevel=4 * MM)
 			b.frame((d / 3 - 160 * MM, WINDOW_H + 40 * MM, WALL_T * 0.8), 60 * MM,
 			        (side_x, y, band_z + WINDOW_H / 2), "steel_light", axis="X", bevel=3 * MM)
 
@@ -155,7 +162,7 @@ def make_shell():
 
 	for sx in (-1, 1):
 		for k in (0.3, 0.62, 0.94):
-			b.box((70 * MM, d + 2 * OVERHANG, purlin),
+			b.box((64 * MM, d + 2 * OVERHANG - 44 * MM, purlin),
 			      (sx * half * k, 0,
 			       SHED_RIDGE_H - rise * k - deck_half_v - purlin / 2 - 15 * MM),
 			      "steel", bevel=3 * MM)
@@ -167,7 +174,7 @@ def make_shell():
 		b.box((length, d + 2 * OVERHANG, deck_t), (mid_x, 0, mid_z), "roof_metal",
 		      bevel=5 * MM, rot=(0, sx * pitch, 0))
 
-	b.box((300 * MM, d + 2 * OVERHANG, 70 * MM), (0, 0, SHED_RIDGE_H + 40 * MM),
+	b.box((300 * MM, d + 2 * OVERHANG - 24 * MM, 70 * MM), (0, 0, SHED_RIDGE_H + 40 * MM),
 	      "roof_metal", bevel=6 * MM)
 
 	return b.finish("shed_shell", smooth_angle=30)

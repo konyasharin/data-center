@@ -92,7 +92,7 @@ def _front_panel(b, units, width, height, cz):
 
 	# recessed bay well: the dark gap around each carrier is what makes the row read
 	b.box((pitch_x * bays + 6 * MM, 8 * MM, pitch_z * rows + 6 * MM),
-	      (start_x + pitch_x * (bays - 1) / 2, face + 3 * MM, cz), "mesh_black",
+	      (start_x + pitch_x * (bays - 1) / 2, -2.5 * MM, cz), "mesh_black",
 	      bevel=0.6 * MM)
 	assert pitch_x > bw, f"drive bays overlap: pitch {pitch_x:.4f} <= carrier {bw:.4f}"
 
@@ -133,9 +133,6 @@ def make_server(units=1, name=None):
 
 	b.box((w, depth, h), (0, depth / 2, cz), "steel_dark", bevel=1.5 * MM,
 	      mat_faces={"+Z": "steel_dark", "-Y": "steel"})
-
-	b.box((w * 0.82, depth * 0.7, 1.5 * MM), (0, depth * 0.45, h - 0.5 * MM),
-	      "steel", bevel=0.5 * MM)
 
 	_front_panel(b, units, w, h, cz)
 	b.box((w * 0.98, 10 * MM, h * 0.9), (0, depth - 5 * MM, cz), "mesh_black",
@@ -182,11 +179,14 @@ def make_rack_frame(units=42, name=None):
 			b.cyl(24 * MM, 26 * MM, (sx * (w / 2 - 70 * MM), sy * (d / 2 - 70 * MM), 13 * MM),
 			      "rubber", sides=10)
 
+	# posts run 12 mm into the plinth and the roof; ending flush against them puts
+	# four faces in the same plane
+	post_h = total - RACK_PLINTH - RACK_ROOF + 24 * MM
 	for sx in (-1, 1):
 		for sy in (-1, 1):
-			b.box((POST, POST, total - RACK_PLINTH - RACK_ROOF),
-			      (sx * (w - POST) / 2, sy * (d - POST) / 2,
-			       RACK_PLINTH + (total - RACK_PLINTH - RACK_ROOF) / 2),
+			b.box((POST, POST, post_h),
+			      (sx * (w - POST) / 2 - sx * 3 * MM, sy * (d - POST) / 2 - sy * 3 * MM,
+			       RACK_PLINTH - 12 * MM + post_h / 2),
 			      "rack_black", bevel=3 * MM)
 
 	b.box((w, d, RACK_ROOF), (0, 0, total - RACK_ROOF / 2), "rack_black", bevel=3 * MM)
@@ -203,7 +203,7 @@ def make_rack_frame(units=42, name=None):
 			x = sx * (RACK_PANEL_WIDTH / 2 + RAIL_W / 2)
 			y = sy * (d / 2 - 90 * MM)
 			b.box((RAIL_W, RAIL_T, rail_h), (x, y, rail_z), mat, bevel=1.5 * MM)
-			b.detail((RAIL_W * 0.7, 1.5 * MM, rail_h), (x, y - sy * (RAIL_T / 2 + 0.5 * MM),
+			b.detail((RAIL_W * 0.7, 1.5 * MM, rail_h), (x, y - sy * (RAIL_T / 2 + 1.5 * MM),
 			                                            rail_z),
 			         texture="dc_rail_holes", tile=U, plane="XZ")
 
@@ -249,14 +249,14 @@ def make_rack_door(units=42, kind="front", name=None):
 	      rot=(90, 0, 0))
 
 	if kind != "rear":
-		b.box((150 * MM, 3 * MM, 44 * MM), (cx, -t / 2 - 1 * MM, h - 96 * MM), "label")
-		b.box((26 * MM, 3 * MM, 26 * MM), (cx - 96 * MM, -t / 2 - 1 * MM, h - 96 * MM),
+		b.box((150 * MM, 3 * MM, 44 * MM), (cx, -t / 2 - 2 * MM, h - 96 * MM), "label")
+		b.box((26 * MM, 3 * MM, 26 * MM), (cx - 96 * MM, -t / 2 - 2 * MM, h - 96 * MM),
 		      "paint_blue")
 		for i in range(3):
-			b.box((70 * MM, 2 * MM, 16 * MM), (w - 120 * MM, -t / 2 - 1 * MM,
+			b.box((70 * MM, 2 * MM, 16 * MM), (w - 120 * MM, -t / 2 - 2 * MM,
 			                                   140 * MM + i * 26 * MM), "label")
 	else:
-		b.box((64 * MM, 3 * MM, 30 * MM), (cx, -t / 2 - 1 * MM, h - 96 * MM), "label")
+		b.box((64 * MM, 3 * MM, 30 * MM), (cx, -t / 2 - 2 * MM, h - 96 * MM), "label")
 
 	for sz in (0.10, 0.50, 0.90):
 		b.cyl(13 * MM, 64 * MM, (6 * MM, 0, h * sz), "steel", sides=12)

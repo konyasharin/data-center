@@ -59,9 +59,9 @@ def make_laptop_base():
 def make_laptop_lid():
 	b = Builder()
 	w, h, t = 330 * MM, 215 * MM, 11 * MM
+	# no screen panel here: laptop_display is a separate object in the same place,
+	# and two coplanar panels 1 mm apart flicker as the camera moves
 	b.box((w, t, h), (0, 0, h / 2), "plastic_dark", bevel=2 * MM)
-	b.box((w - 22 * MM, 4 * MM, h - 22 * MM), (0, -t / 2 - 1 * MM, h / 2), "screen_off",
-	      bevel=1 * MM)
 	b.cyl(2 * MM, 3 * MM, (0, -t / 2 - 1 * MM, h - 9 * MM), "plastic_grey", sides=8,
 	      rot=(90, 0, 0))
 	return b.finish("laptop_lid")
@@ -71,7 +71,7 @@ def make_laptop_display():
 	"""Bare quad in the lid's local space; Godot swaps this material for a viewport."""
 	b = Builder()
 	w, h = 330 * MM - 26 * MM, 215 * MM - 26 * MM
-	b.box((w, 1 * MM, h), (0, -8 * MM, h / 2 + 11 * MM), "screen_on", bevel=0)
+	b.box((w, 2 * MM, h), (0, -9 * MM, h / 2 + 11 * MM), "screen_on", bevel=0)
 	obj = b.finish("laptop_display")
 	mat = bpy.data.materials.new("terminal_screen")
 	mat.use_nodes = True
@@ -319,9 +319,9 @@ def make_ac_outdoor():
 	b.cyl(0.21, 30 * MM, (0, -d / 2 - 2 * MM, h * 0.55 + 60 * MM), "mesh_black", sides=16,
 	      rot=(90, 0, 0))
 	for i in range(5):
-		b.box((0.40, 6 * MM, 14 * MM), (0, -d / 2 - 12 * MM,
-		                                h * 0.55 + 60 * MM - 80 * MM + i * 40 * MM),
-		      "plastic_grey", bevel=2 * MM, rot=(0, i * 36, 0))
+		b.box((0.40, 6 * MM, 12 * MM), (0, -d / 2 - 12 * MM - i * 0.4 * MM,
+		                                h * 0.55 + 60 * MM),
+		      "plastic_grey", bevel=2 * MM, rot=(0, 20 + i * 36, 0))
 	b.louvres((w - 80 * MM, h * 0.7, 10 * MM), (0, d / 2 - 4 * MM, h / 2 + 60 * MM), 12,
 	          "mesh_black")
 	for sx in (-1, 1):

@@ -104,10 +104,12 @@ def make_tray_hanger(drop=0.55):
 
 
 def make_ceiling_tile():
+	"""Sized to drop *into* the grid opening and rest on the flange — a tile as wide
+	as the grid pitch intersects the T-bars and z-fights along every edge."""
 	b = Builder()
-	t = 16 * MM
-	b.box((CEIL_TILE - 8 * MM, CEIL_TILE - 8 * MM, t), (0, 0, t / 2), "ceiling_tile",
-	      bevel=2 * MM)
+	t = 15 * MM
+	span = CEIL_TILE - 26 * MM
+	b.box((span, span, t), (0, 0, t / 2 + 7 * MM), "ceiling_tile", bevel=2 * MM)
 	return b.finish("ceiling_tile")
 
 
@@ -115,11 +117,10 @@ def make_ceiling_grid():
 	"""One 600 mm cross of T-bar, so a ceiling is an instanced grid."""
 	b = Builder()
 	for axis in (0, 1):
-		size = (CEIL_TILE, 24 * MM, 32 * MM) if axis == 0 else (24 * MM, CEIL_TILE, 32 * MM)
-		b.box(size, (0, 0, 16 * MM), "steel_light", bevel=1.5 * MM)
-	for axis in (0, 1):
-		size = (CEIL_TILE, 8 * MM, 6 * MM) if axis == 0 else (8 * MM, CEIL_TILE, 6 * MM)
-		b.box(size, (0, 0, 3 * MM), "steel_light", bevel=1 * MM)
+		web = (CEIL_TILE, 10 * MM, 30 * MM) if axis == 0 else (10 * MM, CEIL_TILE, 30 * MM)
+		flange = (CEIL_TILE, 24 * MM, 7 * MM) if axis == 0 else (24 * MM, CEIL_TILE, 7 * MM)
+		b.box(web, (0, 0, 15 * MM + 7 * MM), "steel_light", bevel=1.5 * MM)
+		b.box(flange, (0, 0, 3.5 * MM), "steel_light", bevel=1 * MM)
 	return b.finish("ceiling_grid")
 
 

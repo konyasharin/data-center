@@ -46,11 +46,11 @@ def make_body(name="worker"):
 	for sy, panel_y in ((-1, -0.126), (1, 0.126)):
 		b.part("Spine1")
 		b.box((0.345, 0.026, 0.155), (0, panel_y, 1.240), "hi_vis", bevel=10 * MM)
-		b.box((0.345, 0.032, 0.034), (0, panel_y + sy * 0.005, 1.198), "hi_vis_strip",
+		b.box((0.318, 0.032, 0.034), (0, panel_y + sy * 0.009, 1.198), "hi_vis_strip",
 		      bevel=3 * MM)
 		b.part("Spine2")
 		b.box((0.375, 0.026, 0.165), (0, panel_y, 1.385), "hi_vis", bevel=10 * MM)
-		b.box((0.375, 0.032, 0.034), (0, panel_y + sy * 0.005, 1.328), "hi_vis_strip",
+		b.box((0.348, 0.032, 0.034), (0, panel_y + sy * 0.009, 1.328), "hi_vis_strip",
 		      bevel=3 * MM)
 	b.part("Spine2")
 	for sx in (-1, 1):
@@ -62,14 +62,14 @@ def make_body(name="worker"):
 
 	b.part("Head")
 	b.box((0.168, 0.196, 0.215), (0, 0.006, 1.652), "skin", bevel=34 * MM, segments=4)
-	b.box((0.172, 0.176, 0.085), (0, 0.016, 1.734), "hair_dark", bevel=30 * MM, segments=3)
-	b.box((0.036, 0.032, 0.040), (0, -0.092, 1.648), "skin", bevel=12 * MM, segments=2)
+	b.box((0.180, 0.190, 0.086), (0, 0.016, 1.739), "hair_dark", bevel=30 * MM, segments=3)
+	b.box((0.038, 0.034, 0.042), (0, -0.088, 1.648), "skin", bevel=12 * MM, segments=2)
 	for sx in (-1, 1):
 		b.box((0.030, 0.014, 0.016), (sx * 0.040, -0.090, 1.690), "plastic_dark",
 		      bevel=4 * MM)
 		b.box((0.034, 0.012, 0.010), (sx * 0.040, -0.093, 1.706), "hair_dark", bevel=3 * MM)
-		b.sphere(0.020, (sx * 0.084, 0.010, 1.660), "skin", segments=8, rings=4,
-		         scale=(0.45, 1.0, 1.0))
+		b.sphere(0.024, (sx * 0.072, 0.010, 1.660), "skin", segments=8, rings=4,
+		         scale=(0.40, 0.9, 1.0))
 
 	for side, sx in (("Left", 1.0), ("Right", -1.0)):
 		b.part(f"{side}Shoulder")

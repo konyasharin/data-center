@@ -154,16 +154,19 @@ class Builder:
 		w, h, d = size
 		t = thickness
 		out = []
+		# the uprights run the full height and the rails are inset: butting them exactly
+		# leaves coplanar end faces, which flicker in the engine
+		inner = w - 2 * t
 		if axis == "Y":
-			out += self.box((w, d, t), (at[0], at[1], at[2] + h / 2 - t / 2), mat, bevel=bevel)
-			out += self.box((w, d, t), (at[0], at[1], at[2] - h / 2 + t / 2), mat, bevel=bevel)
-			out += self.box((t, d, h - 2 * t), (at[0] - w / 2 + t / 2, at[1], at[2]), mat, bevel=bevel)
-			out += self.box((t, d, h - 2 * t), (at[0] + w / 2 - t / 2, at[1], at[2]), mat, bevel=bevel)
+			out += self.box((inner, d, t), (at[0], at[1], at[2] + h / 2 - t / 2), mat, bevel=bevel)
+			out += self.box((inner, d, t), (at[0], at[1], at[2] - h / 2 + t / 2), mat, bevel=bevel)
+			out += self.box((t, d, h), (at[0] - w / 2 + t / 2, at[1], at[2]), mat, bevel=bevel)
+			out += self.box((t, d, h), (at[0] + w / 2 - t / 2, at[1], at[2]), mat, bevel=bevel)
 		else:
-			out += self.box((d, w, t), (at[0], at[1], at[2] + h / 2 - t / 2), mat, bevel=bevel)
-			out += self.box((d, w, t), (at[0], at[1], at[2] - h / 2 + t / 2), mat, bevel=bevel)
-			out += self.box((d, t, h - 2 * t), (at[0], at[1] - w / 2 + t / 2, at[2]), mat, bevel=bevel)
-			out += self.box((d, t, h - 2 * t), (at[0], at[1] + w / 2 - t / 2, at[2]), mat, bevel=bevel)
+			out += self.box((d, inner, t), (at[0], at[1], at[2] + h / 2 - t / 2), mat, bevel=bevel)
+			out += self.box((d, inner, t), (at[0], at[1], at[2] - h / 2 + t / 2), mat, bevel=bevel)
+			out += self.box((d, t, h), (at[0], at[1] - w / 2 + t / 2, at[2]), mat, bevel=bevel)
+			out += self.box((d, t, h), (at[0], at[1] + w / 2 - t / 2, at[2]), mat, bevel=bevel)
 		return out
 
 	def louvres(self, size, at, count, mat="mesh_black", axis="Y", bevel=0.0015):

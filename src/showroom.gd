@@ -39,6 +39,10 @@ func _ready() -> void:
 	if "--stats" in OS.get_cmdline_user_args():
 		_stats()
 
+	if "--flicker" in OS.get_cmdline_user_args():
+		_flicker()
+		return
+
 	if "--shots" in OS.get_cmdline_user_args():
 		_shoot()
 		return
@@ -61,6 +65,52 @@ const SHOTS := [
 	["catalogue", Vector3(-4.2, 2.1, -5.6), Vector3(-6.6, 0.95, -8.6)],
 	["worker", Vector3(0.9, 1.5, 1.4), Vector3(-0.2, 1.05, 0.2)],
 ]
+
+
+func _flicker() -> void:
+	## Hold the camera dead still and save consecutive frames. Anything that differs
+	## between them is temporal — TAA, dithered LOD, shadow noise — not geometry.
+	var camera := Camera3D.new()
+	camera.fov = 70
+	camera.far = 300
+	add_child(camera)
+	camera.make_current()
+	camera.position = Vector3(-0.15, 2.05, 0.95)
+	camera.look_at(Vector3(-0.95, 1.35, -0.35), Vector3.UP)
+
+	var args := OS.get_cmdline_user_args()
+	if "--notaa" in args:
+		get_viewport().use_taa = false
+	if "--nofade" in args:
+		for node in _walk(self):
+			if node is GeometryInstance3D:
+				node.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
+	if "--nolod" in args:
+		for node in _walk(self):
+			if node is GeometryInstance3D:
+				node.visibility_range_begin = 0.0
+				node.visibility_range_end = 0.0
+	if "--noalpha" in args:
+		for key in ["dc_perforation", "dc_rail_holes", "dc_floor_grille"]:
+			var m: StandardMaterial3D = Assets.material(key)
+			m.alpha_antialiasing_mode = BaseMaterial3D.ALPHA_ANTIALIASING_OFF
+	if "--nopeople" in args:
+		for node in _walk(self):
+			if node is AnimationPlayer:
+				node.stop()
+
+	var dir := "user://flicker"
+	DirAccess.make_dir_recursive_absolute(dir)
+	for i in 30:
+		await RenderingServer.frame_post_draw
+	for i in 6:
+		for j in 2:
+			await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		img.save_png("%s/f%d.png" % [dir, i])
+	print("flicker variant done")
+	print("flicker frames: ", ProjectSettings.globalize_path(dir))
+	get_tree().quit()
 
 
 func _shoot() -> void:

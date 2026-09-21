@@ -17,7 +17,8 @@ import bpy
 
 from dclib import exporter
 from dclib.meshkit import Builder, clear_scene
-from dclib.units import MM, RACK_PANEL_WIDTH, U
+from dclib.units import (MM, RACK_PANEL_WIDTH, SPINE_BASE, SPINE_CLIPS, SPINE_HEIGHT,
+                         SPINE_PITCH, U)
 
 TILE = 0.600
 TILE_T = 32 * MM
@@ -174,6 +175,24 @@ def make_pdu_strip():
 	return b.finish("pdu_strip")
 
 
+def make_cable_spine():
+	"""Vertical finger duct for the rear channel of a cabinet.
+
+	Cords are pushed into the gaps between the fingers instead of hanging across the
+	rack, which is what keeps a wired cabinet readable: one bundle running straight
+	down, not forty diagonals. The gaps are the attachment points the scene picks up.
+	"""
+	b = Builder()
+	h = SPINE_HEIGHT
+	b.box((56 * MM, 8 * MM, h), (0, 0, h / 2), "plastic_grey", bevel=2 * MM)
+	for i in range(SPINE_CLIPS + 1):
+		z = SPINE_BASE + i * SPINE_PITCH - SPINE_PITCH / 2
+		b.box((50 * MM, 46 * MM, 26 * MM), (0, -27 * MM, z), "plastic_grey", bevel=2 * MM)
+		# the lip is what stops a bundle falling back out of the duct
+		b.box((50 * MM, 8 * MM, 40 * MM), (0, -47 * MM, z), "plastic_dark", bevel=1.5 * MM)
+	return b.finish("cable_spine")
+
+
 def main():
 	clear_scene()
 	exporter.setup_studio()
@@ -193,6 +212,7 @@ def main():
 		(lambda: make_blanking_panel(2), "hardware"),
 		(make_cable_manager, "hardware"),
 		(make_pdu_strip, "hardware"),
+		(make_cable_spine, "hardware"),
 	):
 		obj = build.emit(maker(), folder)
 		made[obj.name] = obj

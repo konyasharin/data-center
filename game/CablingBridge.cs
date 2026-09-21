@@ -52,6 +52,9 @@ public partial class CablingBridge : RefCounted
 		return (int)result;
 	}
 
+	public int LinkCount() => _state.LinkCount;
+	public bool LinkLive(int link) => _state.LinkLive(link);
+	public int LinkPortA(int link) => _state.LinkPortA(link);
 	public bool Disconnect(int link) => _state.Disconnect(link);
 	public int DisconnectFeed(int feed) => _state.DisconnectFeed((Feed)feed);
 
@@ -61,6 +64,39 @@ public partial class CablingBridge : RefCounted
 		return (int)status.Power
 			| (status.Online ? OnlineBit : 0)
 			| (status.BothInletsOneFeed ? OneFeedBit : 0);
+	}
+
+	// Packed port state, for repainting the markers. Asking the bridge per port meant
+	// five interop calls each across a hall of several thousand — a visible hitch on
+	// every click, for something that is one pass over three arrays.
+	public const int LineBit = 1;
+	public const int FreeBit = 1 << 1;
+	public const int FeedShift = 2;
+
+	public int[] PortStates()
+	{
+		int[] states = new int[_state.PortTotal];
+		for (int port = 0; port < states.Length; port++)
+		{
+			int bits = _state.LineOf(port) == LineKind.Network ? LineBit : 0;
+			if (_state.IsFree(port))
+			{
+				states[port] = bits | FreeBit;
+				continue;
+			}
+			// a cord is coloured by the feed at whichever end has one
+			Feed feed = _state.FeedOf(_state.OwnerOf(port));
+			if (feed == Feed.None)
+			{
+				int other = _state.OtherEnd(port);
+				if (other >= 0)
+				{
+					feed = _state.FeedOf(_state.OwnerOf(other));
+				}
+			}
+			states[port] = bits | ((int)feed << FeedShift);
+		}
+		return states;
 	}
 
 	/// <summary>Every live link as a flat run of port pairs — what the cable geometry

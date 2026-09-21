@@ -29,14 +29,19 @@ const RACK_FRONT_Z := RACK_D / 2
 const CHASSIS_INSET := 0.081
 
 const SHED_RACK := 100              # rack ids for the shed, out of reach of the hall
-const STRIP_X := 0.25               # outermost PDU strip, from the rack centre
-const STRIP_GAP := 0.07
+# Rear channel, looking at the back of a cabinet. The ducts stand inboard of the PDU
+# strips and clear of the server sockets at x = +-0.142, so nothing the player has to
+# click is hidden behind something else.
+const STRIP_X := 0.262
+const SPINE_X := 0.19
+const CHANNEL_Z := -0.46
 
 const HALL := Vector2i(20, 14)      # floor tiles
 const LOD_SWITCH := 9.0              # metres: detailed chassis inside, lod1 beyond
 const SHED_ORIGIN := Vector3(0, 0, 16.0)
 
 var _label_font: Font
+var _cabling := CablingBridge.new()
 var _wiring: Wiring
 var _hud_label: Label
 
@@ -44,6 +49,7 @@ var _hud_label: Label
 func _ready() -> void:
 	_environment()
 	_wiring = Wiring.new()
+	_wiring.attach(_cabling)
 	add_child(_wiring)
 	_hall()
 	_shed()
@@ -411,7 +417,7 @@ func _hall() -> void:
 			var x := (i - 3.5) * (RACK_W + 0.002)
 			# `i` drives what the cabinet looks like, `id` is who it is: the two rows
 			# must not share ids, or a cord could reach across the aisle
-			_rack(Vector3(x, PLENUM, z), facing, i, row * 8 + i)
+			_rack(Vector3(x, PLENUM, z), facing, i, row * 16 + i)
 
 	for i in 4:
 		_ceiling_lamp(Vector3((i - 1.5) * 3.0, 3.35, 0))
@@ -502,23 +508,32 @@ func _rack(at: Vector3, yaw: float, index: int, id: int) -> void:
 	rear.rotation.y = PI
 	root.add_child(rear)
 
-	# Six 0U strips, three per feed: one 16-outlet strip does not feed forty servers,
-	# and the two supplies have to be reachable from the same spot for the choice
-	# between them to be a choice at all.
+	var entry: Dictionary = _wiring.rack(id, Transform3D(basis, at))
+	_fittings(root, entry, 2)
+	_populate(root, index, entry)
+
+
+func _fittings(root: Node3D, entry: Dictionary, strips_per_feed: int) -> void:
+	## The rear channel: PDU strips out at the edge, a finger duct inboard of each.
+	## Both face the hot aisle, because that is the side everything is patched from.
 	var strips := _multimesh("hardware/pdu_strip", root)
 	var strip_tf: Array[Transform3D] = []
-	var entry: Dictionary = _wiring.rack(id, Transform3D(basis, at))
-	for i in 3:
+	for i in strips_per_feed:
 		for hand in [-1, 1]:
-			var pos := Vector3(hand * (STRIP_X - i * STRIP_GAP), PLINTH + 0.1,
-				-RACK_FRONT_Z + 0.07)
-			# turned to face the hot aisle, where the person patching is standing
+			var pos := Vector3(hand * STRIP_X, PLINTH + 0.1,
+				CHANNEL_Z + 0.06 - i * 0.075)
 			strip_tf.append(Transform3D(Basis(Vector3.UP, PI), pos))
 			_wiring.add_strip(entry, pos,
 				Wiring.FeedId.A if hand < 0 else Wiring.FeedId.B)
 	_fill(strips, strip_tf)
 
-	_populate(root, index, entry)
+	var spines := _multimesh("hardware/cable_spine", root)
+	var spine_tf: Array[Transform3D] = []
+	for hand in [-1, 1]:
+		var pos := Vector3(hand * SPINE_X, PLINTH, CHANNEL_Z)
+		spine_tf.append(Transform3D(Basis(Vector3.UP, PI), pos))
+		_wiring.add_spine(entry, pos)
+	_fill(spines, spine_tf)
 
 
 func _populate(root: Node3D, index: int, entry: Dictionary) -> void:
@@ -553,7 +568,8 @@ func _populate(root: Node3D, index: int, entry: Dictionary) -> void:
 	var manager_tf: Array[Transform3D] = []
 
 	var face_z := RACK_FRONT_Z - CHASSIS_INSET
-	var fill: int = [34, 30, 38, 26, 40, 22][index % 6]
+	# what 64 outlets can actually feed, two inlets each, is where this stops
+	var fill: int = [24, 20, 26, 18, 28, 16][index % 6]
 	var slot := 1
 	while slot < 41:
 		var y := PLINTH + slot * U + 0.001
@@ -567,14 +583,16 @@ func _populate(root: Node3D, index: int, entry: Dictionary) -> void:
 			Vector3(0, y + U * 0.5, -face_z))
 		if slot == 40:
 			patch_tf.append(turned)
+			# 24 in a row, 34 mm in from each edge of a 19" panel
 			_wiring.add_panel(entry, Vector3(0, y + U * 0.5, -face_z - 0.004),
-				Wiring.Kind.PATCH, 24, 0.36, 0.0)
+				Wiring.Kind.PATCH, 24, -0.2073, 0.018026, 0.0)
 		elif slot == 39 or slot == 36:
-			manager_tf.append(centred)
+			manager_tf.append(turned)
 		elif slot == 38 or slot == 37:
 			switch_tf.append(turned)
+			# two rows of twelve on a 28 mm pitch, starting 60 mm in on the left
 			_wiring.add_panel(entry, Vector3(0, y + U * 0.5, -face_z - 0.004),
-				Wiring.Kind.SWITCH, 24, 0.36, 0.020)
+				Wiring.Kind.SWITCH, 24, -0.1813, 0.028, 0.020)
 		elif index % 3 == 2 and slot >= 6 and slot <= 9:
 			if slot == 6:
 				big_tf.append(here)
@@ -639,14 +657,7 @@ func _shed() -> void:
 		# two rooms; the shed is left unpatched on purpose, it is where you start
 		var entry: Dictionary = _wiring.rack(SHED_RACK + i,
 			Transform3D(Basis(), rack.position + SHED_ORIGIN))
-		var strips := _multimesh("hardware/pdu_strip", rack)
-		var strip_tf: Array[Transform3D] = []
-		for hand in [-1, 1]:
-			var pos := Vector3(hand * STRIP_X, PLINTH + 0.1, -RACK_FRONT_Z + 0.07)
-			strip_tf.append(Transform3D(Basis(Vector3.UP, PI), pos))
-			_wiring.add_strip(entry, pos,
-				Wiring.FeedId.A if hand < 0 else Wiring.FeedId.B)
-		_fill(strips, strip_tf)
+		_fittings(rack, entry, 1)
 		_populate(rack, i, entry)
 
 	_place(shed, "furniture/desk", Vector3(2.0, 0, 1.2), PI * 0.5)
@@ -829,10 +840,11 @@ func _prewire() -> void:
 			2, 3:
 				continue
 			5:
-				_wiring.wire_rack(entry, 4, 7)
+				_wiring.wire_rack(entry, 4, 7, true)
 			_:
-				_wiring.wire_rack(entry)
+				_wiring.wire_rack(entry, 0, 1, true)
 	_wiring.clear_message()
+	_wiring.refresh()
 
 
 func _hud() -> void:
@@ -849,9 +861,22 @@ func _hud() -> void:
 func _process(_delta: float) -> void:
 	if _hud_label == null:
 		return
-	_hud_label.text = ("WASD ходить · Shift бег · F полёт · Esc мышь · Q выход"
-		+ "\nстойки 2 и 3 не разведены — патчить с задней стороны"
+	# Label re-lays out its text on every assignment, and most frames it is the same
+	var text := ("WASD ходить · Shift бег · Space прыжок · F полёт · Esc мышь · Q выход"
+		+ "\n" + _unwired_hint()
 		+ "\n" + _wiring.hud_text())
+	if text != _hud_label.text:
+		_hud_label.text = text
+
+
+func _unwired_hint() -> String:
+	var bare := PackedStringArray()
+	for entry in _wiring.racks():
+		if int(entry["index"]) < SHED_RACK and _wiring.is_bare(entry):
+			bare.append(str(entry["index"]))
+	if bare.is_empty():
+		return "всё разведено"
+	return "не разведены стойки %s — патчить с задней стороны" % ", ".join(bare)
 
 
 # ------------------------------------------------------------------ helpers

@@ -28,6 +28,11 @@ const RESULT_TEXT := [
 	"питание берётся только из PDU",
 ]
 
+# packed by CablingBridge.PortStates
+const LINE_BIT := 1
+const FREE_BIT := 1 << 1
+const FEED_SHIFT := 2
+
 const POWER_STATE := {UNPOWERED = 0, SINGLE = 1, REDUNDANT = 2}
 const ONLINE_BIT := 1 << 2
 const ONE_FEED_BIT := 1 << 3
@@ -37,18 +42,28 @@ const PICK_CONE := 0.055     # radians-ish: half-angle the crosshair forgives
 const MARKER := 0.011
 const CABLE_R := 0.003
 const SAG := 0.16            # of the span, how far a loose cord droops
-const CHANNEL_X := 0.25      # vertical cable channel, inside the frame upright
-const CHANNEL_Z := -0.515    # as far back as a cord may sit before the rear door
+# must match tools/blender/dclib/units.py: the gaps between the duct's fingers
+const SPINE_PITCH := 0.09
+const SPINE_BASE := 0.10
+const SPINE_CLIPS := 18
+const CLIP_SPREAD := 0.004   # how far apart cords sit inside one gap
+const CLIP_FULL := 10        # cords in one gap before it reads as stuffed
+# outlets up a PDU strip, from build_room.py: 80 mm up, 1.3 m of run
+const OUTLET_BASE := 0.08
+const OUTLET_SPAN := 1.3
 
 const COLOUR := {
-	"free_power": Color(0.42, 0.42, 0.45),
-	"free_network": Color(0.30, 0.42, 0.38),
+	"free_power": Color(0.55, 0.55, 0.58),
+	"free_network": Color(0.38, 0.55, 0.48),
 	"feed_a": Color(0.78, 0.18, 0.14),
 	"feed_b": Color(0.20, 0.38, 0.82),
 	"network": Color(0.22, 0.62, 0.30),
 	"hover": Color(1.0, 1.0, 1.0),
 	"held": Color(1.0, 0.85, 0.2),
 	"blocked": Color(1.0, 0.25, 0.2),
+	"clip_free": Color(0.30, 0.32, 0.36),
+	"clip_used": Color(0.45, 0.52, 0.60),
+	"stuffed": Color(0.80, 0.45, 0.10),
 }
 
 const STATUS_COLOUR := {
@@ -59,13 +74,23 @@ const STATUS_COLOUR := {
 	"ok": Color(0.15, 0.75, 0.25),
 }
 
-var _bridge := CablingBridge.new()
+var _bridge: CablingBridge
 
 # port -> world
 var _port_pos := PackedVector3Array()
 var _port_out := PackedVector3Array()   # outward normal, where a cable leaves the socket
 var _port_line := PackedInt32Array()
 var _port_rack := PackedInt32Array()   # index into _racks, for routing in rack space
+
+# Attachment points on the vertical ducts. These are not devices and the core knows
+# nothing about them: a cord works the same whether it is dressed in or thrown across
+# the cabinet. What they change is whether the rack can be read at a glance.
+var _clip_pos := PackedVector3Array()
+var _clip_out := PackedVector3Array()
+var _clip_load := PackedInt32Array()
+var _states := PackedInt32Array()      # per port, packed by the bridge
+var _routes := {}                      # link -> the clips a cord is dressed into
+var _held_route := PackedInt32Array()
 
 # device bookkeeping the scene needs and the core does not
 var _servers := PackedInt32Array()
@@ -74,6 +99,7 @@ var _server_out := PackedVector3Array()
 var _racks: Array[Dictionary] = []
 
 var _markers: MultiMeshInstance3D
+var _clips: MultiMeshInstance3D
 var _status: MultiMeshInstance3D
 var _cables: MeshInstance3D
 var _ghost: MeshInstance3D
@@ -84,6 +110,13 @@ var _message_at := 0.0
 
 
 # ------------------------------------------------------------------ building
+
+func attach(bridge: CablingBridge) -> void:
+	## The bridge owns the hall's wiring and is handed in from outside, because this
+	## node is a view of that state and has to be able to die without taking it along
+	## (CLAUDE.md, rule 1).
+	_bridge = bridge
+
 
 func rack(index: int, xform: Transform3D) -> Dictionary:
 	## Called by the scene builder once per cabinet, before any device is added.
@@ -96,6 +129,9 @@ func rack(index: int, xform: Transform3D) -> Dictionary:
 		"uplinks": PackedInt32Array(),
 		"port_from": _port_pos.size(),
 		"port_to": _port_pos.size(),
+		"clip_from": _clip_pos.size(),
+		"clip_to": _clip_pos.size(),
+		"slot": _racks.size(),
 	}
 	_racks.append(entry)
 	return entry
@@ -123,10 +159,9 @@ func add_strip(entry: Dictionary, at: Vector3, feed: int, outlets := 16) -> int:
 	## A 0U strip down the back channel. Outlets face the aisle, which is where the
 	## person doing the patching is standing.
 	var device: int = _bridge.AddDevice(Kind.PDU, entry["index"], outlets, 0, feed)
-	var span := 1.5 - 0.2
 	for i in outlets:
-		var z := 0.08 + i * span / float(outlets - 1)
-		_port(entry, device, at + Vector3(0.0, z, -0.030))
+		var up := OUTLET_BASE + i * OUTLET_SPAN / float(maxi(outlets - 1, 1))
+		_port(entry, device, at + Vector3(0.0, up, -0.030))
 	if feed == FeedId.A:
 		entry["feed_a"].append(device)
 	else:
@@ -135,33 +170,45 @@ func add_strip(entry: Dictionary, at: Vector3, feed: int, outlets := 16) -> int:
 
 
 func add_panel(entry: Dictionary, centre: Vector3, kind: int, ports: int,
-		width: float, row_gap: float) -> int:
-	## `centre` is the middle of the port face in rack space. One row when row_gap is
-	## zero, two when it is not — which is how the models are drawn.
+		first_x: float, pitch: float, row_gap: float) -> int:
+	## Sockets are placed where the model actually draws them, not spread evenly across
+	## the panel: a switch's two rows of twelve start 60 mm in from the left edge and
+	## are not centred (tools/blender/build_props.py). Guessing put markers 38 mm out.
 	var device: int = _bridge.AddDevice(kind, entry["index"], 0, ports, FeedId.NONE)
 	var rows := 2 if row_gap > 0.0 else 1
 	var per_row := ports / rows
 	for i in ports:
 		var row := i / per_row
 		var col := i % per_row
-		var x := (col - (per_row - 1) * 0.5) * (width / per_row)
 		var y := (row - (rows - 1) * 0.5) * row_gap
-		_port(entry, device, centre + Vector3(x, y, 0.0))
+		_port(entry, device, centre + Vector3(first_x + col * pitch, y, 0.0))
 	if kind == Kind.SWITCH:
 		entry["uplinks"].append(device)
 	return device
 
 
+func add_spine(entry: Dictionary, at: Vector3) -> void:
+	## The vertical finger duct. Every gap between two fingers is somewhere a cord can
+	## be dressed in, and the numbers match tools/blender/dclib/units.py.
+	var xform: Transform3D = entry["xform"]
+	for i in SPINE_CLIPS:
+		var local := at + Vector3(0.0, SPINE_BASE + i * SPINE_PITCH, -0.030)
+		_clip_pos.append(xform * local)
+		_clip_out.append((xform.basis * Vector3(0, 0, -1)).normalized())
+		_clip_load.append(0)
+	entry["clip_to"] = _clip_pos.size()
+
+
 func _port(entry: Dictionary, _device: int, local: Vector3) -> void:
 	var xform: Transform3D = entry["xform"]
 	_port_pos.append(xform * local)
-	_port_rack.append(_racks.size() - 1)
+	_port_rack.append(entry["slot"])
 	entry["port_to"] = _port_pos.size()
 	# sockets on a rear panel point back down the hot aisle; a PDU outlet points the
 	# same way, which is why the strip is turned round when the scene places it
 	_port_out.append((xform.basis * Vector3(0, 0, -1)).normalized())
 	# the core hands out ports in the order devices are added, so its index and ours
-	# are the same number — asserted in build()
+	# are the same number; build() checks that before anything relies on it
 	_port_line.append(_bridge.LineOf(_port_pos.size() - 1))
 
 
@@ -171,9 +218,16 @@ func build() -> void:
 	var expected := 0
 	for device in _bridge.DeviceCount():
 		expected += _bridge.PortCountOf(device)
+		for i in _bridge.PortCountOf(device):
+			var port: int = _bridge.PortOf(device, i)
+			if port >= _port_pos.size() or _bridge.RackOf(device) != _racks[_port_rack[port]]["index"]:
+				push_error("wiring: port %d of device %d is not where the scene put it"
+					% [i, device])
+				return
 	if expected != _port_pos.size():
 		push_error("wiring: %d ports in the core, %d placed in the scene"
 			% [expected, _port_pos.size()])
+		return
 
 	print("wiring: %d racks, %d servers, %d ports" % [
 		_racks.size(), _servers.size(), _port_pos.size()])
@@ -182,6 +236,11 @@ func build() -> void:
 	_markers.multimesh = _sprite_mesh(_port_pos.size())
 	_markers.material_override = _flat_material()
 	add_child(_markers)
+
+	_clips = MultiMeshInstance3D.new()
+	_clips.multimesh = _sprite_mesh(_clip_pos.size(), 0.018)
+	_clips.material_override = _flat_material()
+	add_child(_clips)
 
 	_status = MultiMeshInstance3D.new()
 	_status.multimesh = _sprite_mesh(_servers.size(), 0.014)
@@ -200,6 +259,8 @@ func build() -> void:
 
 	for i in _port_pos.size():
 		_markers.multimesh.set_instance_transform(i, _facing(_port_pos[i], _port_out[i]))
+	for i in _clip_pos.size():
+		_clips.multimesh.set_instance_transform(i, _facing(_clip_pos[i], _clip_out[i]))
 	for i in _servers.size():
 		_status.multimesh.set_instance_transform(i, _facing(_server_pos[i], _server_out[i]))
 
@@ -208,21 +269,76 @@ func build() -> void:
 
 # ------------------------------------------------------------------ actions
 
-func wire_rack(entry: Dictionary, mistake_in := 0, seed_value := 1) -> void:
+func wire_rack(entry: Dictionary, mistake_in := 0, seed_value := 1, quiet := false) -> void:
+	var first_link: int = _bridge.LinkCount()
 	var report: PackedInt32Array = _bridge.WireRack(
 		entry["servers"], entry["feed_a"], entry["feed_b"], entry["uplinks"],
 		mistake_in, seed_value)
+
+	# whoever wires a rack also dresses it: the cords go into the ducts. Leaving them
+	# hanging is something the player can do, not something the job produces.
+	for link in range(first_link, _bridge.LinkCount()):
+		if _bridge.LinkLive(link):
+			_dress(link, _auto_route(entry, _bridge.LinkPortA(link),
+				_bridge.OtherEnd(_bridge.LinkPortA(link))))
 	_say("стойка %d: серверов %d, питание %d, сеть %d, промахов %d%s" % [
 		entry["index"], report[0], report[1], report[2], report[3],
 		"" if report[4] == 0 else ", не хватило портов: %d" % report[4]])
 	if report[4] > 0 or report[5] > 0:
 		push_warning("rack %d: %d ports short, %d refused" % [
 			entry["index"], report[4], report[5]])
-	refresh()
+	if not quiet:
+		refresh()
+
+
+func _auto_route(entry: Dictionary, from_port: int, to_port: int) -> PackedInt32Array:
+	if to_port < 0:
+		return PackedInt32Array()
+	var inv: Transform3D = entry["xform"].affine_inverse()
+	var a := inv * _port_pos[from_port]
+	var b := inv * _port_pos[to_port]
+	# down the duct nearest the far end — a PDU strip sits beside one of them, and a
+	# switch in the middle is reached from whichever side the server already uses
+	var side := signf(b.x) if absf(b.x) > 0.05 else signf(a.x)
+	if side == 0.0:
+		side = 1.0
+
+	var enter := _nearest_clip(entry, inv, side, a.y)
+	var leave := _nearest_clip(entry, inv, side, b.y)
+	if enter < 0:
+		return PackedInt32Array()
+	if leave < 0 or leave == enter:
+		return PackedInt32Array([enter])
+	return PackedInt32Array([enter, leave])
+
+
+func _nearest_clip(entry: Dictionary, inv: Transform3D, side: float,
+		height: float) -> int:
+	var best := -1
+	var best_gap := INF
+	for clip in range(entry["clip_from"], entry["clip_to"]):
+		var local := inv * _clip_pos[clip]
+		if signf(local.x) != side:
+			continue
+		# a stuffed gap is passed over rather than packed tighter
+		var gap := absf(local.y - height) + (0.4 if _clip_load[clip] >= CLIP_FULL else 0.0)
+		if gap < best_gap:
+			best_gap = gap
+			best = clip
+	return best
 
 
 func racks() -> Array[Dictionary]:
 	return _racks
+
+
+func is_bare(entry: Dictionary) -> bool:
+	## No server in the rack has a single cord in it.
+	for server in entry["servers"]:
+		for i in _bridge.PortCountOf(server):
+			if not _bridge.IsFree(_bridge.PortOf(server, i)):
+				return false
+	return true
 
 
 func clear_message() -> void:
@@ -230,13 +346,45 @@ func clear_message() -> void:
 
 
 func refresh() -> void:
+	# anything that changes the patching from outside — wiring a rack, dropping a feed
+	# — can have taken the port the player is holding, or killed a dressed cord
+	if _held >= 0 and not _bridge.IsFree(_held):
+		_drop_held()
+	_prune_routes()
+
 	_paint_markers()
+	_paint_clips()
 	_paint_status()
 	_cables.mesh = _cable_mesh()
 	_ghost.mesh = _ghost_mesh()
 
 
+func _prune_routes() -> void:
+	for link in _routes.keys():
+		if not _bridge.LinkLive(link):
+			_undress(link)
+
+
+func _paint_clips() -> void:
+	for clip in _clip_pos.size():
+		_clips.multimesh.set_instance_color(clip, _clip_colour(clip))
+
+
+func _clip_colour(clip: int) -> Color:
+	if _held_route.has(clip):
+		return COLOUR["held"]
+	if _hover == clip_code(clip):
+		return COLOUR["hover"]
+	if _clip_load[clip] >= CLIP_FULL:
+		return COLOUR["stuffed"]
+	if _clip_load[clip] > 0:
+		return COLOUR["clip_used"]
+	return COLOUR["clip_free"]
+
+
 func _paint_markers() -> void:
+	# one array across the bridge instead of five calls per port
+	_states = _bridge.PortStates()
 	for port in _port_pos.size():
 		_markers.multimesh.set_instance_color(port, _marker_colour(port))
 
@@ -250,28 +398,20 @@ func _marker_colour(port: int) -> Color:
 			return COLOUR["hover"] if verdict == 0 else COLOUR["blocked"]
 		return COLOUR["hover"]
 
-	if _bridge.IsFree(port):
-		return (COLOUR["free_power"] if _port_line[port] == Line.POWER
-			else COLOUR["free_network"])
+	var bits: int = _states[port]
+	if bits & FREE_BIT:
+		return (COLOUR["free_network"] if bits & LINE_BIT
+			else COLOUR["free_power"])
 	return _line_colour(port)
 
 
 func _line_colour(port: int) -> Color:
-	if _port_line[port] == Line.NETWORK:
+	var bits: int = _states[port]
+	if bits & LINE_BIT:
 		return COLOUR["network"]
-	# a power cord is coloured by the feed it lands on, which is the whole point of
-	# being able to see the wiring at all
-	var feed := _feed_of_link(port)
+	var feed := (bits >> FEED_SHIFT) & 0x3
 	return COLOUR["feed_a"] if feed == FeedId.A else (
 		COLOUR["feed_b"] if feed == FeedId.B else COLOUR["free_power"])
-
-
-func _feed_of_link(port: int) -> int:
-	var mine: int = _bridge.FeedOf(_bridge.OwnerOf(port))
-	if mine != FeedId.NONE:
-		return mine
-	var other: int = _bridge.OtherEnd(port)
-	return FeedId.NONE if other < 0 else _bridge.FeedOf(_bridge.OwnerOf(other))
 
 
 func _paint_status() -> void:
@@ -293,10 +433,15 @@ func _status_colour(bits: int) -> Color:
 
 
 func _click() -> void:
-	if _hover < 0:
+	if _hover == -1:
 		if _held >= 0:
-			_held = -1
+			_drop_held()
 			_say("кабель убран")
+			refresh()
+		return
+
+	if is_clip(_hover):
+		_clip_click(-_hover - 2)
 		return
 
 	if _held < 0:
@@ -305,29 +450,67 @@ func _click() -> void:
 			return
 		_held = _hover
 		_say("держим конец: %s" % _describe(_hover))
+		_paint_markers()
 		return
 
 	var result: int = _bridge.Connect(_held, _hover)
 	_say(RESULT_TEXT[result] if result < RESULT_TEXT.size() else "отказ %d" % result)
 	if result == 0:
+		_dress(_bridge.LastLink, _held_route)
 		_held = -1
+		_held_route = PackedInt32Array()
 	refresh()
+
+
+func _clip_click(clip: int) -> void:
+	if _held < 0:
+		return
+	var at := _held_route.find(clip)
+	if at >= 0:
+		_held_route.remove_at(at)
+		_say("вынули из крепления")
+	else:
+		_held_route.append(clip)
+		_say("уложили в крепление (%d)" % _held_route.size())
 
 
 func _unplug() -> void:
 	if _held >= 0:
-		_held = -1
+		_drop_held()
 		_say("кабель убран")
+		refresh()
 		return
-	if _hover < 0:
+	if _hover < 0 or is_clip(_hover):
 		return
 	var link: int = _bridge.LinkOf(_hover)
 	if link < 0:
 		_say("здесь ничего не воткнуто")
 		return
+	_undress(link)
 	_bridge.Disconnect(link)
 	_say("выдернуто")
 	refresh()
+
+
+func _drop_held() -> void:
+	_held = -1
+	_held_route = PackedInt32Array()
+
+
+func _dress(link: int, clips: PackedInt32Array) -> void:
+	if clips.is_empty():
+		return
+	_routes[link] = clips
+	for clip in clips:
+		_clip_load[clip] += 1
+
+
+func _undress(link: int) -> void:
+	if not _routes.has(link):
+		return
+	for clip in _routes[link]:
+		_clip_load[clip] -= 1
+	_routes.erase(link)
 
 
 func drop_feed(feed: int) -> void:
@@ -351,6 +534,8 @@ func rack_at(point: Vector3) -> Dictionary:
 # ------------------------------------------------------------------ input
 
 func _unhandled_input(event: InputEvent) -> void:
+	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		return
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_LEFT:
 			_click()
@@ -382,30 +567,57 @@ func _process(_delta: float) -> void:
 		_ghost.mesh = _ghost_mesh()
 
 
+## Picking returns one number for two kinds of target: a port is its own index, a
+## clip is -(index + 2), and -1 is nothing. Two parallel hover variables would have
+## to be kept in step at every call site, and that is the bug this avoids.
+static func clip_code(clip: int) -> int:
+	return -(clip + 2)
+
+
+static func is_clip(code: int) -> bool:
+	return code <= -2
+
+
 func _pick(camera: Camera3D) -> int:
 	var origin := camera.global_position
 	var forward := -camera.global_transform.basis.z
 	var best := -1
 	var best_score := INF
-	# a hall is thousands of ports and this runs every frame, so only the cabinets
+	# a hall is thousands of targets and this runs every frame, so only the cabinets
 	# within arm's reach are worth walking
 	for entry in _racks:
 		if (entry["xform"].origin - origin).length() > REACH + 1.3:
 			continue
 		for port in range(entry["port_from"], entry["port_to"]):
-			var to_port: Vector3 = _port_pos[port] - origin
-			var along := to_port.dot(forward)
-			if along < 0.12 or along > REACH:
+			# a socket turned away from the player is behind a closed door and half a
+			# rack of steel; letting the crosshair through it patches from the cold aisle
+			if (_port_pos[port] - origin).dot(_port_out[port]) >= 0.0:
 				continue
-			# forgive a wider miss further away, or distant ports are unpickable
-			var off := (to_port - forward * along).length()
-			if off > PICK_CONE * along:
-				continue
-			var score := off / along + along * 0.02
+			var score := _aim(origin, forward, _port_pos[port])
 			if score < best_score:
 				best_score = score
 				best = port
+		# clips only matter while a cord is in hand, and letting them compete with
+		# ports the rest of the time makes sockets hard to hit
+		if _held >= 0:
+			for clip in range(entry["clip_from"], entry["clip_to"]):
+				var score := _aim(origin, forward, _clip_pos[clip])
+				if score < best_score:
+					best_score = score
+					best = clip_code(clip)
 	return best
+
+
+func _aim(origin: Vector3, forward: Vector3, target: Vector3) -> float:
+	var to_target := target - origin
+	var along := to_target.dot(forward)
+	if along < 0.12 or along > REACH:
+		return INF
+	# forgive a wider miss further away, or distant targets are unpickable
+	var off := (to_target - forward * along).length()
+	if off > PICK_CONE * along:
+		return INF
+	return off / along + along * 0.02
 
 
 # ------------------------------------------------------------------ geometry
@@ -419,7 +631,10 @@ func _cable_mesh() -> ArrayMesh:
 
 	var i := 0
 	while i < links.size():
-		_tube(st, _route(links[i], links[i + 1]), _line_colour(links[i]))
+		var from_port: int = links[i]
+		var link: int = _bridge.LinkOf(from_port)
+		_tube(st, _cable_points(from_port, links[i + 1],
+			_routes.get(link, PackedInt32Array())), _line_colour(from_port))
 		i += 2
 
 	st.generate_normals()
@@ -432,43 +647,60 @@ func _ghost_mesh() -> ArrayMesh:
 	var camera := get_viewport().get_camera_3d()
 	if camera == null:
 		return null
-	var tip: Vector3 = _port_pos[_hover] if _hover >= 0 else (
-		camera.global_position + (-camera.global_transform.basis.z) * 0.5)
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	_run(st, _port_pos[_held], _port_out[_held], tip,
-		_port_out[_hover] if _hover >= 0 else Vector3.UP, COLOUR["held"])
+
+	# the cord follows the clips already chosen and then the crosshair, so the shape
+	# it will take is visible before committing to it
+	var points := PackedVector3Array([_port_pos[_held],
+		_port_pos[_held] + _port_out[_held] * 0.02])
+	for clip in _held_route:
+		points.append(_clip_pos[clip] + _clip_out[clip] * 0.016)
+	if _hover >= 0:
+		points.append(_port_pos[_hover] + _port_out[_hover] * 0.02)
+		points.append(_port_pos[_hover])
+	else:
+		points.append(camera.global_position + (-camera.global_transform.basis.z) * 0.5)
+
+	_tube(st, _smooth(_smooth(points)) if points.size() > 2
+		else _droop(points[0], _port_out[_held], points[points.size() - 1], Vector3.UP),
+		COLOUR["held"])
 	st.generate_normals()
 	return st.commit()
 
 
-func _route(from_port: int, to_port: int) -> PackedVector3Array:
-	## Cords do not fly across a cabinet: they leave the socket, go sideways into the
-	## vertical channel at the edge of the rack, run up or down it, and come back in.
-	## Routing them properly is also what stops forty cables reading as one grey mush.
-	var entry: Dictionary = _racks[_port_rack[from_port]]
-	var xform: Transform3D = entry["xform"]
-	var inv := xform.affine_inverse()
-	var a := inv * _port_pos[from_port]
-	var b := inv * _port_pos[to_port]
+func _cable_points(from_port: int, to_port: int,
+		clips: PackedInt32Array) -> PackedVector3Array:
+	## A cord dressed into the duct runs through the gaps it was pushed into; one that
+	## was not simply hangs. That difference is the whole reason the ducts exist, so it
+	## has to be visible from across the aisle.
+	var from := _port_pos[from_port]
+	var to := _port_pos[to_port]
+	if clips.is_empty():
+		return _droop(from, _port_out[from_port], to, _port_out[to_port])
 
-	# the channel on the side the far end is already on, and a depth that depends on
-	# the port so a bundle looks like many cords rather than one slab
-	var side := signf(b.x if absf(b.x) > absf(a.x) else a.x)
-	var channel := CHANNEL_X * (1.0 if side == 0.0 else side)
-	var z := maxf(minf(a.z, b.z) - 0.02 - (from_port % 5) * 0.004, CHANNEL_Z)
+	var points := PackedVector3Array([from, from + _port_out[from_port] * 0.02])
+	# cords in one gap are spread across its depth, or a full duct is a solid slab
+	var lane := (from_port % 5) * CLIP_SPREAD
+	for clip in clips:
+		points.append(_clip_pos[clip] + _clip_out[clip] * (0.012 + lane))
+	points.append(to + _port_out[to_port] * 0.02)
+	points.append(to)
+	return _smooth(_smooth(points))
 
-	var points := PackedVector3Array([
-		a,
-		Vector3(a.x, a.y, a.z - 0.02),
-		Vector3(channel, a.y, z),
-		Vector3(channel, b.y, z),
-		Vector3(b.x, b.y, b.z - 0.02),
-		b,
-	])
-	points = _smooth(_smooth(points))
-	for i in points.size():
-		points[i] = xform * points[i]
+
+func _droop(from: Vector3, from_out: Vector3, to: Vector3,
+		to_out: Vector3) -> PackedVector3Array:
+	var span := from.distance_to(to)
+	var lift := from + from_out * minf(0.06, span * 0.3)
+	var land := to + to_out * minf(0.06, span * 0.3)
+	var sag := Vector3.DOWN * (span * SAG)
+
+	var points := PackedVector3Array()
+	var steps := 9
+	for i in steps + 1:
+		var t := float(i) / steps
+		points.append(_bezier(from, lift + sag, land + sag, to, t))
 	return points
 
 
@@ -562,8 +794,6 @@ func _flat_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.vertex_color_use_as_albedo = true
-	mat.billboard_keep_scale = true
-	mat.no_depth_test = false
 	return mat
 
 
@@ -603,7 +833,8 @@ func hud_text() -> String:
 		lines.append("%s — %s" % [_describe(_hover), state])
 		if _held >= 0:
 			var verdict: int = _bridge.CanConnect(_held, _hover)
-			lines.append("ЛКМ: %s" % RESULT_TEXT[verdict])
+			lines.append("ЛКМ: %s" % (RESULT_TEXT[verdict]
+				if verdict < RESULT_TEXT.size() else "отказ %d" % verdict))
 	elif _held >= 0:
 		lines.append("держим кабель — наведитесь на порт")
 	else:

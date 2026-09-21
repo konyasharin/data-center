@@ -27,6 +27,13 @@ SERVER_GAP = 0.15 * MM
 def server_height(units: int = 1) -> float:
 	return units * U - 2 * SERVER_GAP
 
+# Vertical cable duct down the rear channel of a cabinet. src/wiring.gd mirrors these
+# numbers to place the attachment points, so the two have to stay in step.
+SPINE_HEIGHT = 1.8
+SPINE_PITCH = 90 * MM
+SPINE_BASE = 100 * MM                  # centre of the lowest gap, from the duct foot
+SPINE_CLIPS = 18
+
 # Drive carriers
 LFF_W, LFF_H, LFF_D = 105 * MM, 29 * MM, 150 * MM   # 3.5" in caddy
 SFF_W, SFF_H, SFF_D = 73 * MM, 17 * MM, 105 * MM    # 2.5" in caddy

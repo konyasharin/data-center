@@ -19,6 +19,7 @@ const U := 0.04445
 const PLINTH := 0.05
 
 const HALL := Vector2i(20, 14)      # floor tiles
+const LOD_SWITCH := 10.0             # metres: detailed chassis inside, lod1 beyond
 const SHED_ORIGIN := Vector3(0, 0, 16.0)
 
 var _label_font: Font
@@ -50,6 +51,8 @@ const SHOTS := [
 	["hall_wide", Vector3(4.2, 2.35, 3.3), Vector3(-1.0, 1.10, -0.6)],
 	["hall_floor", Vector3(1.8, 0.95, 0.6), Vector3(-1.2, 0.48, 0.0)],
 	["hall_rear", Vector3(3.0, 1.60, -3.2), Vector3(-2.0, 1.30, -2.3)],
+	["probe_face", Vector3(0.75, 1.30, 0.62), Vector3(-0.55, 1.15, -0.35)],
+	["probe_far", Vector3(5.2, 1.55, 0.2), Vector3(-2.0, 1.20, -0.4)],
 	["shed_inside", Vector3(2.6, 1.65, 18.4), Vector3(-1.6, 1.2, 16.4)],
 	["shed_terminal", Vector3(2.9, 1.45, 16.4), Vector3(2.0, 0.85, 17.2)],
 	["catalogue", Vector3(-4.2, 2.1, -5.6), Vector3(-6.6, 0.95, -8.6)],
@@ -296,7 +299,15 @@ func _rack(at: Vector3, yaw: float, index: int) -> void:
 
 func _populate(root: Node3D, index: int) -> void:
 	## One MultiMesh per rack: a hall of 8400 chassis cannot be 8400 nodes.
+	# Chassis LED pips are 4 mm: past a few metres they are sub-pixel and crawl as the
+	# camera moves. Visibility ranges swap in the LOD mesh, which is the L0/L1 split
+	# from docs/10-tech-architecture.md doing real work rather than an anti-alias hack.
 	var servers := _multimesh("hardware/server_1u", root)
+	var servers_far := _multimesh("hardware/server_1u_lod1", root)
+	servers.visibility_range_end = LOD_SWITCH
+	servers.visibility_range_end_margin = 1.5
+	servers_far.visibility_range_begin = LOD_SWITCH
+	servers_far.visibility_range_begin_margin = 1.5
 	var big := _multimesh("hardware/server_4u", root)
 	var blanks := _multimesh("hardware/blanking_panel_1u", root)
 	var patch := _multimesh("hardware/patch_panel_1u", root)
@@ -334,6 +345,7 @@ func _populate(root: Node3D, index: int) -> void:
 		slot += 1
 
 	_fill(servers, server_tf)
+	_fill(servers_far, server_tf)
 	_fill(big, big_tf)
 	_fill(blanks, blank_tf)
 	_fill(patch, patch_tf)
@@ -473,12 +485,15 @@ func _catalogue() -> void:
 
 		var label := Label3D.new()
 		label.text = row[i][1]
-		label.font_size = 40
-		label.pixel_size = 0.0009
+		# fixed_size keeps the caption legible from across the room instead of
+		# shrinking into a two-pixel smear
+		label.fixed_size = true
+		label.font_size = 64
+		label.pixel_size = 0.00055
 		label.position = cell + Vector3(0, plinth_h + (high - low) + 0.16, 0)
 		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		label.modulate = Color(0.78, 0.85, 0.95)
-		label.outline_size = 10
+		label.outline_size = 16
 		add_child(label)
 
 		var light := OmniLight3D.new()

@@ -104,19 +104,19 @@ def _front_panel(b, units, width, height, cz):
 			if units == 1:
 				b.box((bw * 0.42, 3 * MM, bh * 0.72), (x - bw * 0.24, face - 8 * MM, z),
 				      "plastic_dark", bevel=0.5 * MM)
-				b.box((2.5 * MM, 2 * MM, 2.5 * MM),
-				      (x + bw * 0.22, face - 8 * MM, z - bh * 0.38), "led_green")
+				b.box((4 * MM, 2 * MM, 4 * MM),
+				      (x + bw * 0.20, face - 8 * MM, z - bh * 0.34), "led_green")
 			else:
 				b.box((bw * 0.16, 3 * MM, bh * 0.62), (x - bw * 0.33, face - 8 * MM, z),
 				      "plastic_dark", bevel=0.5 * MM)
-				b.box((2.5 * MM, 2 * MM, 2.5 * MM),
+				b.box((4 * MM, 2 * MM, 4 * MM),
 				      (x + bw * 0.30, face - 8 * MM, z + bh * 0.24), "led_green")
 
 	cx = width / 2 - 40 * MM
 	b.box((24 * MM, 5 * MM, height * 0.8), (cx, face, cz), "plastic_dark", bevel=0.8 * MM)
 	for i, led in enumerate(("led_green", "led_amber", "led_blue")):
-		b.box((3.5 * MM, 2 * MM, 3.5 * MM),
-		      (cx - 8 * MM + i * 8 * MM, face + 2 * MM, cz + height * 0.22), led)
+		b.box((5 * MM, 2 * MM, 5 * MM),
+		      (cx - 9 * MM + i * 9 * MM, face + 2 * MM, cz + height * 0.22), led)
 	b.cyl(5 * MM, 4 * MM, (cx, face, cz - height * 0.18), "plastic_grey", sides=10,
 	      rot=(90, 0, 0))
 

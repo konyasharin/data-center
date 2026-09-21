@@ -6,6 +6,9 @@
 resource_name = "dc_floor_grille"
 transparency = 1
 alpha_scissor_threshold = 0.5
+alpha_antialiasing_mode = 1
+alpha_antialiasing_edge = 0.3
+texture_filter = 5
 cull_mode = 2
 albedo_texture = ExtResource("1")
 metallic = 0.75

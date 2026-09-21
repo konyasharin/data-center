@@ -18,7 +18,11 @@ def rack_height(units: int = RACK_UNITS_42) -> float:
 # Server chassis
 SERVER_WIDTH = 430 * MM
 SERVER_DEPTH = 750 * MM
-SERVER_GAP = 0.75 * MM                 # clearance so neighbouring chassis never z-fight
+# Clearance between stacked chassis. Kept tiny on purpose: a 1.5 mm black slot
+# repeated 42 times up a rack is a high-frequency pattern, and seen along the row it
+# aliases into crawling bands that no amount of MSAA removes. Real racks are packed
+# nearly flush too.
+SERVER_GAP = 0.15 * MM
 
 def server_height(units: int = 1) -> float:
 	return units * U - 2 * SERVER_GAP

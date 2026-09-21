@@ -19,7 +19,7 @@ const U := 0.04445
 const PLINTH := 0.05
 
 const HALL := Vector2i(20, 14)      # floor tiles
-const LOD_SWITCH := 10.0             # metres: detailed chassis inside, lod1 beyond
+const LOD_SWITCH := 4.5              # metres: detailed chassis inside, lod1 beyond
 const SHED_ORIGIN := Vector3(0, 0, 16.0)
 
 var _label_font: Font

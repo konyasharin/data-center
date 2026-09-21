@@ -58,7 +58,7 @@ def _bay_layout(units, width, height, cz):
 	if units == 1:
 		# a 2.5" carrier cannot stand up inside 44 mm, so a 1U bay reads as a narrow
 		# vertical slot: carrier thickness across the face, drive depth into the box
-		face_w, face_h, rows = SFF_H + 4 * MM, height * 0.60, 1
+		face_w, face_h, rows = SFF_H + 10 * MM, height * 0.60, 1
 	else:
 		face_w, face_h = LFF_W, LFF_H
 		rows = max(1, min(4, int((height - 12 * MM) // (face_h + 4 * MM))))
@@ -109,7 +109,7 @@ def _front_panel(b, units, width, height, cz, front=14 * MM):
 
 	# the well sits behind the front plate, inside the opening
 	b.box((open_w - 4 * MM, 20 * MM, open_h - 4 * MM), (open_cx, front + 4 * MM, cz),
-	      "mesh_black", bevel=0.6 * MM)
+	      "steel_dark", bevel=0.6 * MM)
 
 	for sx in (-1, 1):
 		x = sx * (RACK_PANEL_WIDTH / 2 - 13 * MM)

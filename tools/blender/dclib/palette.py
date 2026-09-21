@@ -68,23 +68,28 @@ def uv(name):
 	return ((col + 0.5) / ATLAS, (row + 0.5) / ATLAS)
 
 
-def _srgb_to_linear(c):
-	return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+MAX_EMISSION = max(slot[4] for slot in SLOTS) or 1.0
 
 
 def _pixels(channel):
-	"""Flat RGBA float buffer for one of the atlas maps."""
+	"""Flat RGBA buffer for one atlas map.
+
+	The images are 8-bit, so `Image.pixels` is the raw byte buffer and no colour
+	management runs on write: sRGB values go in verbatim. Converting to linear here
+	would be applied a second time on read and darken every colour by an order of
+	magnitude.
+	"""
 	buf = [0.0] * (ATLAS * ATLAS * 4)
 	for i, (_name, rgb, metal, rough, emit) in enumerate(SLOTS):
 		col, row = i % ATLAS, i // ATLAS
 		o = (row * ATLAS + col) * 4
 		r, g, b = ((rgb >> 16) & 255) / 255, ((rgb >> 8) & 255) / 255, (rgb & 255) / 255
 		if channel == "albedo":
-			px = (_srgb_to_linear(r), _srgb_to_linear(g), _srgb_to_linear(b), 1.0)
+			px = (r, g, b, 1.0)
 		elif channel == "orm":
 			px = (1.0, rough, metal, 1.0)
 		else:
-			e = min(emit, 1.0)
+			e = emit / MAX_EMISSION
 			px = (r * e, g * e, b * e, 1.0)
 		buf[o:o + 4] = px
 	return buf
@@ -139,7 +144,7 @@ def build_material(name="dc_atlas"):
 	nt.links.new(sep.outputs["Blue"], bsdf.inputs["Metallic"])
 
 	nt.links.new(tex("emission", -250).outputs["Color"], bsdf.inputs["Emission Color"])
-	bsdf.inputs["Emission Strength"].default_value = 1.0
+	bsdf.inputs["Emission Strength"].default_value = MAX_EMISSION
 	return mat
 
 

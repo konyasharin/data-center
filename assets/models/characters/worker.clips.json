@@ -1,0 +1,65 @@
+{
+	"fps": 24,
+	"clips": {
+		"idle": {
+			"loop": true,
+			"frames": 96,
+			"seconds": 4.0
+		},
+		"idle_look": {
+			"loop": true,
+			"frames": 120,
+			"seconds": 5.0
+		},
+		"walk": {
+			"loop": true,
+			"frames": 32,
+			"seconds": 1.333
+		},
+		"run": {
+			"loop": true,
+			"frames": 24,
+			"seconds": 1.0
+		},
+		"carry_idle": {
+			"loop": true,
+			"frames": 96,
+			"seconds": 4.0
+		},
+		"carry_walk": {
+			"loop": true,
+			"frames": 32,
+			"seconds": 1.333
+		},
+		"work_stand": {
+			"loop": true,
+			"frames": 110,
+			"seconds": 4.583
+		},
+		"work_crouch": {
+			"loop": true,
+			"frames": 120,
+			"seconds": 5.0
+		},
+		"crouch_down": {
+			"loop": false,
+			"frames": 24,
+			"seconds": 1.0
+		},
+		"tag_hang": {
+			"loop": false,
+			"frames": 30,
+			"seconds": 1.25
+		},
+		"type": {
+			"loop": true,
+			"frames": 96,
+			"seconds": 4.0
+		},
+		"push_cart": {
+			"loop": true,
+			"frames": 32,
+			"seconds": 1.333
+		}
+	}
+}

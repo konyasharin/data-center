@@ -1,3 +1,3 @@
-from . import units, palette, meshkit, exporter
-
-__all__ = ["units", "palette", "meshkit", "exporter"]
+"""Asset build library. Submodules are imported explicitly: `units` must stay
+importable outside Blender, and eager imports here would drag in `bpy`.
+"""

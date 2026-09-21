@@ -8,6 +8,7 @@ This makes slotting a chassis into a rack a pure Z offset.
 Run: blender -b --factory-startup --python tools/blender/build_rack.py
 """
 
+import math
 import os
 import sys
 
@@ -16,10 +17,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bpy
 
 from dclib import exporter
-from dclib.meshkit import Builder, tri_count
+from dclib.meshkit import Builder, clear_scene
 from dclib.units import (
 	LFF_D, LFF_H, LFF_W, MM, RACK_OUTER_DEPTH, RACK_OUTER_WIDTH, RACK_PANEL_WIDTH,
-	RACK_PLINTH, RACK_ROOF, SERVER_DEPTH, SERVER_WIDTH, SFF_D, SFF_H, SFF_W, U,
+	RACK_PLINTH, RACK_ROOF, SERVER_DEPTH, SERVER_GAP, SERVER_WIDTH, SFF_D, SFF_H,
+	SFF_W, U,
 	rack_height, server_height,
 )
 
@@ -39,7 +41,6 @@ def make_drive(kind="lff", name=None):
 	b.box((w, 10 * MM, h), (0, 6 * MM, 0), "alu_brushed", bevel=1.2 * MM,
 	      mat_faces={"-Y": "alu"})
 
-	# latch handle, hinged at the left edge of the face
 	b.box((w * 0.18, 5 * MM, h * 0.78), (-w / 2 + w * 0.13, 1.5 * MM, 0),
 	      "plastic_dark", bevel=0.8 * MM)
 	b.box((w * 0.55, 3 * MM, h * 0.30), (w * 0.08, 1.0 * MM, 0), "plastic_dark",
@@ -69,34 +70,47 @@ def _front_panel(b, units, width, height, cz):
 		b.box((13 * MM, 26 * MM, height * 0.66), (x, -9 * MM, cz), "steel_light",
 		      bevel=1.5 * MM)
 
-	if units == 1:
-		bays, rows, bw, bh = 8, 1, SFF_W, SFF_H
-	else:
-		bays = 6
-		rows = max(1, min(4, int((height - 10 * MM) // (LFF_H + 3 * MM))))
-		bw, bh = LFF_W, LFF_H
-
 	bay_zone_l = -width / 2 + 34 * MM
 	bay_zone_r = width / 2 - 58 * MM
-	pitch_x = min(bw + 3 * MM, (bay_zone_r - bay_zone_l) / bays)
+	span = bay_zone_r - bay_zone_l
+
+	if units == 1:
+		# a 2.5" carrier cannot stand up inside 44 mm, so a 1U bay reads as a narrow
+		# vertical slot: carrier thickness across the face, drive depth into the box
+		face_w, face_h = SFF_H + 4 * MM, height * 0.76
+		rows = 1
+	else:
+		face_w, face_h = LFF_W, LFF_H
+		rows = max(1, min(4, int((height - 12 * MM) // (face_h + 4 * MM))))
+
+	pitch_x = face_w + 4 * MM
+	bays = max(1, min(10, int(span // pitch_x)))  # real 1U chassis top out around 10
 	start_x = (bay_zone_l + bay_zone_r) / 2 - pitch_x * (bays - 1) / 2
-	pitch_z = bh + 3 * MM
+	pitch_z = face_h + 4 * MM
 	start_z = cz - pitch_z * (rows - 1) / 2
+	bw, bh = face_w, face_h
 
 	# recessed bay well: the dark gap around each carrier is what makes the row read
 	b.box((pitch_x * bays + 6 * MM, 8 * MM, pitch_z * rows + 6 * MM),
 	      (start_x + pitch_x * (bays - 1) / 2, face + 3 * MM, cz), "mesh_black",
 	      bevel=0.6 * MM)
+	assert pitch_x > bw, f"drive bays overlap: pitch {pitch_x:.4f} <= carrier {bw:.4f}"
 
 	for r in range(rows):
 		for i in range(bays):
 			x, z = start_x + i * pitch_x, start_z + r * pitch_z
-			b.box((bw * 0.86, 9 * MM, bh * 0.84), (x, face - 2.5 * MM, z), "steel_dark",
+			b.box((bw, 9 * MM, bh), (x, face - 2.5 * MM, z), "steel_dark",
 			      bevel=0.8 * MM, mat_faces={"-Y": "alu_brushed"})
-			b.box((bw * 0.16, 3 * MM, bh * 0.62), (x - bw * 0.33, face - 8 * MM, z),
-			      "plastic_dark", bevel=0.5 * MM)
-			b.box((2.5 * MM, 2 * MM, 2.5 * MM), (x + bw * 0.3, face - 8 * MM,
-			                                     z + bh * 0.24), "led_green")
+			if units == 1:
+				b.box((bw * 0.42, 3 * MM, bh * 0.72), (x - bw * 0.24, face - 8 * MM, z),
+				      "plastic_dark", bevel=0.5 * MM)
+				b.box((2.5 * MM, 2 * MM, 2.5 * MM),
+				      (x + bw * 0.22, face - 8 * MM, z - bh * 0.38), "led_green")
+			else:
+				b.box((bw * 0.16, 3 * MM, bh * 0.62), (x - bw * 0.33, face - 8 * MM, z),
+				      "plastic_dark", bevel=0.5 * MM)
+				b.box((2.5 * MM, 2 * MM, 2.5 * MM),
+				      (x + bw * 0.30, face - 8 * MM, z + bh * 0.24), "led_green")
 
 	cx = width / 2 - 40 * MM
 	b.box((24 * MM, 5 * MM, height * 0.8), (cx, face, cz), "plastic_dark", bevel=0.8 * MM)
@@ -110,7 +124,8 @@ def _front_panel(b, units, width, height, cz):
 	          max(2, units * 2), "mesh_black")
 
 
-def make_server(units=1, name=None, depth=SERVER_DEPTH):
+def make_server(units=1, name=None):
+	depth = SERVER_DEPTH
 	b = Builder()
 	h = server_height(units)
 	w = SERVER_WIDTH
@@ -119,7 +134,6 @@ def make_server(units=1, name=None, depth=SERVER_DEPTH):
 	b.box((w, depth, h), (0, depth / 2, cz), "steel_dark", bevel=1.5 * MM,
 	      mat_faces={"+Z": "steel_dark", "-Y": "steel"})
 
-	# lid seam and ventilation on top
 	b.box((w * 0.82, depth * 0.7, 1.5 * MM), (0, depth * 0.45, h - 0.5 * MM),
 	      "steel", bevel=0.5 * MM)
 
@@ -127,7 +141,6 @@ def make_server(units=1, name=None, depth=SERVER_DEPTH):
 	b.box((w * 0.98, 10 * MM, h * 0.9), (0, depth - 5 * MM, cz), "mesh_black",
 	      bevel=1.0 * MM)
 
-	# rear IO: PSU pair and NIC block
 	for sx in (-1, 1):
 		b.box((w * 0.22, 14 * MM, h * 0.62), (sx * w * 0.33, depth - 7 * MM, cz),
 		      "steel_light", bevel=1.0 * MM)
@@ -136,9 +149,7 @@ def make_server(units=1, name=None, depth=SERVER_DEPTH):
 	b.box((w * 0.3, 10 * MM, h * 0.45), (0, depth - 5 * MM, cz), "plastic_dark",
 	      bevel=0.8 * MM)
 
-	obj = b.finish(name or f"server_{units}u")
-	obj.location = (0, 0, 0)
-	return obj
+	return b.finish(name or f"server_{units}u")
 
 
 def make_server_lod(units=1, level=1):
@@ -159,7 +170,7 @@ def make_server_lod(units=1, level=1):
 
 # ---------------------------------------------------------------- rack
 
-def make_rack_frame(units=42, name=None, with_rails=True, detail=True):
+def make_rack_frame(units=42, name=None):
 	b = Builder()
 	w, d = RACK_OUTER_WIDTH, RACK_OUTER_DEPTH
 	total = rack_height(units)
@@ -179,29 +190,27 @@ def make_rack_frame(units=42, name=None, with_rails=True, detail=True):
 			      "rack_black", bevel=3 * MM)
 
 	b.box((w, d, RACK_ROOF), (0, 0, total - RACK_ROOF / 2), "rack_black", bevel=3 * MM)
-	b.box((w * 0.55, d * 0.3, 8 * MM), (0, -d * 0.18, total - 2 * MM), "mesh_black",
+	b.box((w * 0.55, d * 0.3, 8 * MM), (0, -d * 0.18, total - 6 * MM), "mesh_black",
 	      bevel=1 * MM)
 	for sx in (-1, 1):
-		b.cyl(55 * MM, 12 * MM, (sx * w * 0.22, d * 0.22, total - 4 * MM), "mesh_black",
+		b.cyl(55 * MM, 12 * MM, (sx * w * 0.22, d * 0.22, total - 8 * MM), "mesh_black",
 		      sides=12)
 
-	if with_rails:
-		rail_h = units * U
-		rail_z = inner_bottom + rail_h / 2
-		for sx in (-1, 1):
-			for sy, mat in ((-1, "steel"), (1, "steel_dark")):
-				x = sx * (RACK_PANEL_WIDTH / 2 + RAIL_W / 2)
-				y = sy * (d / 2 - 90 * MM)
-				b.box((RAIL_W, RAIL_T, rail_h), (x, y, rail_z), mat, bevel=1.5 * MM)
-				if detail and sy < 0:
-					for i in range(units):
-						hz = inner_bottom + (i + 0.5) * U
-						b.box((9 * MM, 4 * MM, 9 * MM), (x, y - RAIL_T / 2 + 1 * MM, hz),
-						      "mesh_black", bevel=0.5 * MM)
-						b.box((3 * MM, 2 * MM, 2 * MM),
-						      (x - sx * 14 * MM, y - RAIL_T / 2, hz), "label")
+	rail_h = units * U
+	rail_z = inner_bottom + rail_h / 2
+	for sx in (-1, 1):
+		for sy, mat in ((-1, "steel"), (1, "steel_dark")):
+			x = sx * (RACK_PANEL_WIDTH / 2 + RAIL_W / 2)
+			y = sy * (d / 2 - 90 * MM)
+			b.box((RAIL_W, RAIL_T, rail_h), (x, y, rail_z), mat, bevel=1.5 * MM)
+			if sy < 0:
+				for i in range(units):
+					hz = inner_bottom + (i + 0.5) * U
+					b.box((9 * MM, 4 * MM, 9 * MM), (x, y - RAIL_T / 2 + 1 * MM, hz),
+					      "mesh_black", bevel=0.5 * MM)
+					b.box((3 * MM, 2 * MM, 2 * MM),
+					      (x - sx * 14 * MM, y - RAIL_T / 2, hz), "label")
 
-	# vertical PDU down the rear right post
 	b.box((44 * MM, 44 * MM, units * U * 0.8),
 	      (w / 2 - 80 * MM, d / 2 - 100 * MM, inner_bottom + units * U * 0.45),
 	      "plastic_grey", bevel=2 * MM)
@@ -282,16 +291,13 @@ def make_rack_lod(units=42, level=1):
 # ---------------------------------------------------------------- build
 
 def main():
-	bpy.ops.wm.read_factory_settings(use_empty=True)
+	clear_scene()
 	exporter.setup_studio()
 
-	built = []
+	build = exporter.Build()
 
 	def emit(obj, folder="hardware"):
-		path = os.path.join(exporter.MODELS, folder, f"{obj.name}.glb")
-		_, size = exporter.export_glb([obj], path)
-		built.append((obj.name, tri_count(obj), size))
-		return obj
+		return build.emit(obj, folder)
 
 	frame = emit(make_rack_frame(42))
 	door_f = emit(make_rack_door(42, "front"))
@@ -316,16 +322,11 @@ def main():
 	                       views=(("three_q", 62, 20),))
 
 	stage_assembled(frame, door_f, door_r, side, srv1)
-
-	print("\n=== BUILT ===")
-	for name, tris, size in built:
-		print(f"{name:28s} {tris:7d} tris  {size / 1024:7.1f} KB")
+	build.report()
 
 
 def stage_assembled(frame, door_f, door_r, side, srv1):
 	"""Preview the parts the way the game assembles them: the real quality check."""
-	import math
-
 	w, d = RACK_OUTER_WIDTH, RACK_OUTER_DEPTH
 	front_y = -d / 2 + 0.10
 
@@ -340,7 +341,7 @@ def stage_assembled(frame, door_f, door_r, side, srv1):
 		copy = srv1.copy()
 		copy.data = srv1.data
 		bpy.context.scene.collection.objects.link(copy)
-		copy.location = (0, front_y, RACK_PLINTH + slot * U + 0.00075)
+		copy.location = (0, front_y, RACK_PLINTH + slot * U + SERVER_GAP)
 		populated.append(copy)
 
 	srv1.location = (0, front_y - 0.42, RACK_PLINTH + 24 * U)  # one chassis pulled out

@@ -3,11 +3,12 @@
 Exported in pieces so the game can animate the openings and, later, swap the shell
 for a bigger one without touching the fittings:
   shed_shell      — slab, walls, steel frame, roof
-  shed_gate       — roller gate, origin on the lintel, panels slide up
+  shed_gate       — sectional gate, origin on the floor at the opening centre
   shed_door       — personnel door, origin on the hinge axis
 Run: blender -b --factory-startup --python tools/blender/build_shed.py
 """
 
+import math
 import os
 import sys
 
@@ -16,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bpy
 
 from dclib import exporter
-from dclib.meshkit import Builder, tri_count
+from dclib.meshkit import Builder, clear_scene
 from dclib.units import (
 	DOOR_H, DOOR_W, GATE_H, GATE_W, MM, SHED_D, SHED_RIDGE_H, SHED_W, SHED_WALL_H, WALL_T,
 )
@@ -73,13 +74,11 @@ def _column(b, at, height):
 
 def _truss(b, y, span, wall_h, ridge_h, drop):
 	"""Pitched truss: two rafters, a tie beam and a king post, all clear of the deck."""
-	import math
-
-	rise = ridge_h - wall_h
+	apex = ridge_h - drop
+	rise = apex - wall_h
 	half = span / 2
 	length = math.hypot(half, rise)
 	pitch = math.degrees(math.atan2(rise, half))
-	apex = ridge_h - drop
 
 	b.box((span, 90 * MM, 70 * MM), (0, y, wall_h + 35 * MM), "steel", bevel=4 * MM)
 	b.box((80 * MM, 80 * MM, apex - wall_h), (0, y, (wall_h + apex) / 2), "steel", bevel=4 * MM)
@@ -91,8 +90,6 @@ def _truss(b, y, span, wall_h, ridge_h, drop):
 
 
 def make_shell():
-	import math
-
 	b = Builder()
 	w, d = SHED_W, SHED_D
 	outer_w, outer_d = w + WALL_T, d + WALL_T
@@ -103,7 +100,6 @@ def make_shell():
 	for sx in (-1, 1):
 		b.box((120 * MM, d * 0.9, 3 * MM), (sx * (w / 2 - 1.1), 0, 5 * MM), "paint_yellow")
 
-	# front wall (-Y): gate opening, personnel door, window band above both
 	front_y = -(d + WALL_T) / 2
 	segments = [
 		(-w / 2, GATE_X - GATE_W / 2),
@@ -126,8 +122,9 @@ def make_shell():
 	for sx in (-1, 1):
 		side_x = sx * (w + WALL_T) / 2
 		band_z = WINDOW_SILL
-		_wall(b, d, (side_x, 0, 0), "Y", height=band_z, rib_side=sx)
-		_wall(b, d, (side_x, 0, band_z + WINDOW_H), "Y",
+		# run past the front/back walls, otherwise each corner keeps a 200 mm gap
+		_wall(b, d + 2 * WALL_T, (side_x, 0, 0), "Y", height=band_z, rib_side=sx)
+		_wall(b, d + 2 * WALL_T, (side_x, 0, band_z + WINDOW_H), "Y",
 		      height=SHED_WALL_H - band_z - WINDOW_H, rib_side=sx)
 		for i in range(3):
 			y = -d / 2 + d * (i + 0.5) / 3
@@ -222,16 +219,13 @@ def make_door():
 
 
 def main():
-	bpy.ops.wm.read_factory_settings(use_empty=True)
+	clear_scene()
 	exporter.setup_studio()
 
-	built = []
+	build = exporter.Build()
 
 	def emit(obj, folder="building"):
-		path = os.path.join(exporter.MODELS, folder, f"{obj.name}.glb")
-		_, size = exporter.export_glb([obj], path)
-		built.append((obj.name, tri_count(obj), size))
-		return obj
+		return build.emit(obj, folder)
 
 	shell = emit(make_shell())
 	gate = emit(make_gate())
@@ -248,9 +242,7 @@ def main():
 	                    eye=(SHED_W / 2 - 0.9, SHED_D / 2 - 0.9, 1.65),
 	                    target=(-SHED_W / 2 + 1.0, -SHED_D / 2 + 1.2, 1.3))
 
-	print("\n=== BUILT ===")
-	for name, tris, size in built:
-		print(f"{name:20s} {tris:7d} tris  {size / 1024:7.1f} KB")
+	build.report()
 
 
 if __name__ == "__main__":

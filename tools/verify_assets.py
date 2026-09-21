@@ -15,17 +15,23 @@ import sys
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 MODELS = os.path.join(REPO, "assets", "models")
 
+sys.path.insert(0, os.path.join(REPO, "tools", "blender"))
+from dclib.units import (  # noqa: E402 - needs REPO on the path first
+	DESK_H, HUMAN_HEIGHT, LFF_H, rack_height, server_height,
+)
+
 # model -> (expected height in metres, tolerance). Height is the Y extent: glTF is Y-up.
+# Values come from units.py so a change to U cannot pass this check silently.
 EXPECTED_HEIGHT = {
-	"rack_42u_frame": (1.957, 0.02),
-	"server_1u": (0.0430, 0.003),
-	"server_4u": (0.1763, 0.003),
+	"rack_42u_frame": (rack_height(42), 0.002),
+	"server_1u": (server_height(1), 0.001),
+	"server_4u": (server_height(4), 0.001),
 	"shed_shell": (4.32, 0.15),
-	"worker": (1.77, 0.05),
-	"desk": (0.740, 0.01),
+	"worker": (HUMAN_HEIGHT + 0.02, 0.03),
+	"desk": (DESK_H, 0.005),
 	"shelf": (2.00, 0.02),
 	"pallet": (0.145, 0.01),
-	"drive_lff": (0.029, 0.003),
+	"drive_lff": (LFF_H, 0.002),
 }
 
 BUDGET = {"server_1u": 2500, "rack_42u_frame": 9000, "worker": 5000, "shed_shell": 9000}
@@ -48,9 +54,9 @@ def model_stats(doc):
 	bbox_max = [-1e9] * 3
 	for mesh in doc.get("meshes", []):
 		for prim in mesh.get("primitives", []):
-			if "indices" in prim:
-				tris += doc["accessors"][prim["indices"]]["count"] // 3
 			pos = doc["accessors"][prim["attributes"]["POSITION"]]
+			tris += (doc["accessors"][prim["indices"]]["count"] if "indices" in prim
+			         else pos["count"]) // 3
 			for i in range(3):
 				bbox_min[i] = min(bbox_min[i], pos["min"][i])
 				bbox_max[i] = max(bbox_max[i], pos["max"][i])
@@ -74,13 +80,13 @@ def main():
 			skins = len(doc.get("skins", []))
 			joints = len(doc["skins"][0]["joints"]) if skins else 0
 
-			if mats > 1:
+			if mats != 1:
 				problems.append(f"{stem}: {mats} materials — batching needs exactly one")
 			if max(size) > 20 or max(size) < 0.01:
 				problems.append(f"{stem}: implausible size {size} — unit scale is metres")
-			for key, limit in BUDGET.items():
-				if stem == key and tris > limit:
-					problems.append(f"{stem}: {tris} tris over the {limit} budget")
+			limit = BUDGET.get(stem)
+			if limit and tris > limit:
+				problems.append(f"{stem}: {tris} tris over the {limit} budget")
 			expect_tol = EXPECTED_HEIGHT.get(stem)
 			if expect_tol and abs(size[1] - expect_tol[0]) > expect_tol[1]:
 				problems.append(f"{stem}: height {size[1]:.4f} m, expected "
@@ -93,6 +99,10 @@ def main():
 
 			rows.append((stem, tris, size, mats, anims, joints,
 			             os.path.getsize(path) / 1024))
+
+	if not rows:
+		print(f"no glb files under {MODELS} — run build_all.py first")
+		return 1
 
 	width = max(len(r[0]) for r in rows)
 	print(f"{'model':<{width}}  {'tris':>6}  {'size (m, xyz)':<22} {'mat':>3} "

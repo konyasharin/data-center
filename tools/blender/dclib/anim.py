@@ -13,14 +13,14 @@ FPS = 24
 
 
 def iter_fcurves(action):
-	"""Blender 4.4+ moved fcurves into layers/strips/channelbags."""
-	if hasattr(action, "fcurves"):
-		yield from action.fcurves
-		return
-	for layer in action.layers:
+	"""Blender 4.4+ moved fcurves into layers/strips/channelbags; older builds keep
+	the flat collection."""
+	for layer in getattr(action, "layers", ()):
 		for strip in layer.strips:
 			for bag in strip.channelbags:
 				yield from bag.fcurves
+	if not hasattr(action, "layers"):
+		yield from action.fcurves
 
 
 class Clip:
@@ -29,6 +29,7 @@ class Clip:
 		self.name = name
 		self.length = length
 		self.loop = loop
+		self.frames = []
 
 		if arm_obj.animation_data is None:
 			arm_obj.animation_data_create()
@@ -48,15 +49,19 @@ class Clip:
 		hips = self.arm.pose.bones["Hips"]
 		hips.location = root
 		hips.keyframe_insert("location", frame=frame)
+		self.frames.append(frame)
 
 	def hold(self, frames, poses, root=(0.0, 0.0, 0.0)):
 		for f in frames:
 			self.key(f, poses, root)
 
 	def finish(self, interpolation="BEZIER"):
+		curves = 0
 		for fc in iter_fcurves(self.action):
+			curves += 1
 			for kp in fc.keyframe_points:
 				kp.interpolation = interpolation
+		assert curves, f"{self.name}: no fcurves found — action layout changed"
 		track = self.arm.animation_data.nla_tracks.new()
 		track.name = self.name
 		strip = track.strips.new(self.name, 0, self.action)

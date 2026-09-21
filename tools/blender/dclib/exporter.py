@@ -6,6 +6,8 @@ import os
 import bpy
 from mathutils import Vector
 
+from .meshkit import tri_count
+
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 MODELS = os.path.join(REPO, "assets", "models")
 PREVIEWS = os.path.join(REPO, "assets", "previews")
@@ -24,7 +26,7 @@ def export_glb(objects, path, animations=False):
 		export_apply=True,
 		export_yup=True,
 		export_animations=animations,
-		export_animation_mode="ACTIONS" if animations else "ACTIONS",
+		export_animation_mode="ACTIONS",
 		export_bake_animation=animations,
 		export_optimize_animation_size=False,
 		export_image_format="NONE",  # the atlas is one shared Godot material, not 39 copies
@@ -215,3 +217,25 @@ def render_eye(objects, path, eye, target, resolution=(1100, 720), samples=32, l
 	for o in hidden:
 		o.hide_render = False
 	return path
+
+
+class Build:
+	"""Shared bookkeeping for the build scripts: export, tally, print one table."""
+
+	def __init__(self):
+		self.rows = []
+
+	def emit(self, obj, folder):
+		path = os.path.join(MODELS, folder, f"{obj.name}.glb")
+		_, size = export_glb([obj], path)
+		self.rows.append((obj.name, tri_count(obj), size))
+		return obj
+
+	def report(self, total=False):
+		width = max(len(r[0]) for r in self.rows)
+		print()
+		print("=== BUILT ===")
+		for name, tris, size in self.rows:
+			print(f"{name:<{width}}  {tris:6d} tris  {size / 1024:7.1f} KB")
+		if total:
+			print(f"{'TOTAL':<{width}}  {sum(r[1] for r in self.rows):6d} tris")

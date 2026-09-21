@@ -7,6 +7,7 @@ work standing or crouched, hang a LOTO tag, carry a part, type at the terminal.
 Run: blender -b --factory-startup --python tools/blender/build_worker.py
 """
 
+import json
 import math
 import os
 import sys
@@ -16,9 +17,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bpy
 
 from dclib import anim, exporter, rig
-from dclib.meshkit import Builder, tri_count
+from dclib.meshkit import Builder, clear_scene, tri_count
+from dclib.units import MM
 
-MM = 0.001
 BEV = 6 * MM
 CROUCH_DROP = -0.355
 
@@ -107,14 +108,19 @@ def make_body(name="worker"):
 	return obj
 
 
+HEAD_BONE_Z = 1.56
+
+
 def make_helmet():
-	"""Separate so a role can be swapped without rebuilding the body."""
+	"""Separate so a role can be swapped without rebuilding the body. The origin sits
+	on the Head bone, so a BoneAttachment3D needs no offset."""
 	b = Builder()
-	b.sphere(0.115, (0, 0.004, 1.735), "helmet_white", segments=14, rings=7,
+	z = -HEAD_BONE_Z
+	b.sphere(0.115, (0, 0.004, 1.735 + z), "helmet_white", segments=14, rings=7,
 	         scale=(1.0, 1.05, 0.82))
-	b.box((0.19, 0.075, 0.018), (0, -0.115, 1.706), "helmet_white", bevel=8 * MM,
+	b.box((0.19, 0.075, 0.018), (0, -0.115, 1.706 + z), "helmet_white", bevel=8 * MM,
 	      segments=2)
-	b.box((0.025, 0.20, 0.028), (0, 0.004, 1.80), "helmet_white", bevel=8 * MM)
+	b.box((0.025, 0.20, 0.028), (0, 0.004, 1.80 + z), "helmet_white", bevel=8 * MM)
 	return b.finish("helmet", smooth_angle=48)
 
 
@@ -129,13 +135,13 @@ ARMS_REST = {
 }
 
 
-def walk_pose(phase, stride=26.0, arm_swing=22.0, lift=14.0):
+def walk_pose(phase, stride=26.0, arm_swing=22.0, knee_lift=14.0):
 	"""phase 0..1 around the cycle; 0 is right-foot contact."""
 	a = phase * 2 * math.pi
 	swing = math.sin(a)
 	opposite = math.sin(a + math.pi)
-	knee_r = max(0.0, -math.sin(a - 0.7)) * lift * 2.4
-	knee_l = max(0.0, -math.sin(a + math.pi - 0.7)) * lift * 2.4
+	knee_r = max(0.0, -math.sin(a - 0.7)) * knee_lift * 2.4
+	knee_l = max(0.0, -math.sin(a + math.pi - 0.7)) * knee_lift * 2.4
 
 	return {
 		"RightUpLeg": (-stride * swing, 0, 0),
@@ -202,7 +208,7 @@ def build_clips(arm):
 	def clip(name, length, loop=True):
 		anim.reset_pose(arm)
 		c = anim.Clip(arm, name, length, loop)
-		clips.append(name)
+		clips.append(c)
 		return c
 
 	c = clip("idle", 96)
@@ -222,13 +228,13 @@ def build_clips(arm):
 	c.key(120, base)
 	c.finish()
 
-	for name, length, stride, swing in (("walk", 32, 26.0, 22.0), ("run", 22, 40.0, 38.0)):
+	for name, length, stride, swing in (("walk", 32, 26.0, 22.0), ("run", 24, 40.0, 38.0)):
 		c = clip(name, length)
 		steps = 8
 		for i in range(steps + 1):
 			phase = i / steps
 			pose = walk_pose(phase, stride=stride, arm_swing=swing,
-			                 lift=14.0 if name == "walk" else 22.0)
+			                 knee_lift=14.0 if name == "walk" else 22.0)
 			bob = 0.012 if name == "walk" else 0.03
 			c.key(round(length * phase), pose,
 			      root=lift(-bob * abs(math.sin(phase * 2 * math.pi))))
@@ -241,13 +247,13 @@ def build_clips(arm):
 	c.key(96, CARRY)
 	c.finish()
 
-	c = clip("carry_walk", 34)
+	c = clip("carry_walk", 32)
 	steps = 8
 	for i in range(steps + 1):
 		phase = i / steps
 		legs = {k: v for k, v in walk_pose(phase, stride=22.0).items()
 		        if "Leg" in k or "Foot" in k or k == "Hips"}
-		c.key(round(34 * phase), anim.merge(CARRY, legs),
+		c.key(round(32 * phase), anim.merge(CARRY, legs),
 		      root=lift(-0.012 * abs(math.sin(phase * 2 * math.pi))))
 	c.finish()
 
@@ -301,7 +307,7 @@ def build_clips(arm):
 	c.key(96, TYPE_BASE)
 	c.finish()
 
-	c = clip("push_cart", 34)
+	c = clip("push_cart", 32)
 	push = {
 		"LeftShoulder": (-6, 0, -8), "RightShoulder": (-6, 0, 8),
 		"LeftArm": (-70, 8, -12), "RightArm": (-70, -8, 12),
@@ -312,7 +318,7 @@ def build_clips(arm):
 		phase = i / 8
 		legs = {k: v for k, v in walk_pose(phase, stride=20.0).items()
 		        if "Leg" in k or "Foot" in k}
-		c.key(round(34 * phase), anim.merge(push, legs))
+		c.key(round(32 * phase), anim.merge(push, legs))
 	c.finish()
 
 	anim.reset_pose(arm)
@@ -320,7 +326,7 @@ def build_clips(arm):
 
 
 def main():
-	bpy.ops.wm.read_factory_settings(use_empty=True)
+	clear_scene()
 	exporter.setup_studio()
 
 	body = make_body()
@@ -335,14 +341,32 @@ def main():
 	_, size = exporter.export_glb([armature, body], path, animations=True)
 	hpath = os.path.join(exporter.MODELS, "characters", "helmet.glb")
 	_, hsize = exporter.export_glb([helmet], hpath)
+	write_clip_manifest(clips, os.path.join(exporter.MODELS, "characters", "worker.clips.json"))
 
-	print("\n=== BUILT ===")
+	print()
+	print("=== BUILT ===")
 	print(f"worker.glb   {tri_count(body):6d} tris  {size / 1024:7.1f} KB  "
 	      f"{len(rig.BONES)} bones  {len(clips)} clips")
 	print(f"helmet.glb   {tri_count(helmet):6d} tris  {hsize / 1024:7.1f} KB")
-	print("clips: " + ", ".join(clips))
+	print("clips: " + ", ".join(c.name for c in clips))
 
 	_preview(body, helmet, armature)
+
+
+def write_clip_manifest(clips, path):
+	"""glTF carries no loop flag, so the game would otherwise have to hardcode which
+	of the twelve clips cycle. Godot reads this next to the model instead."""
+	data = {
+		"fps": anim.FPS,
+		"clips": {
+			c.name: {"loop": c.loop, "frames": max(c.frames), "seconds": round(max(c.frames) / anim.FPS, 3)}
+			for c in clips
+		},
+	}
+	with open(path, "w", encoding="utf-8") as fh:
+		json.dump(data, fh, indent="	", ensure_ascii=False)
+		fh.write("\n")
+	return path
 
 
 def _preview(body, helmet, armature):

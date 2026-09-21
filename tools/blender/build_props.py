@@ -8,6 +8,7 @@ a shed needs decoration.
 Run: blender -b --factory-startup --python tools/blender/build_props.py
 """
 
+import math
 import os
 import sys
 
@@ -15,8 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bpy
 
-from dclib import exporter, palette
-from dclib.meshkit import Builder, tri_count
+from dclib import exporter
+from dclib.meshkit import Builder, clear_scene
 from dclib.units import DESK_H, MM, RACK_PANEL_WIDTH, U
 
 
@@ -183,7 +184,7 @@ def make_extinguisher():
 	b.cyl(18 * MM, 40 * MM, (-r * 0.6, 0, h + 120 * MM), "plastic_white", sides=10,
 	      rot=(0, 90, 0))
 	b.box((110 * MM, 4 * MM, 150 * MM), (0, -r - 1 * MM, h * 0.55), "label")
-	b.cyl(r + 8 * MM, 26 * MM, (0, 0, 30 * MM), "plastic_dark", sides=14)
+	b.cyl(r + 8 * MM, 26 * MM, (0, 0, 13 * MM), "plastic_dark", sides=14)
 	return b.finish("extinguisher")
 
 
@@ -295,17 +296,18 @@ def make_cable_coil():
 
 
 def make_ac_indoor():
-	"""Wall split unit — the shed's cooling in phase 1. Origin on the wall face."""
+	"""Wall split unit — the shed's cooling in phase 1. Origin on the wall face at its
+	top edge, so hanging it is a single height value."""
 	b = Builder()
 	w, h, d = 0.84, 0.29, 0.21
-	b.box((w, d, h), (0, -d / 2, 0), "plastic_white", bevel=14 * MM)
-	b.box((w - 90 * MM, 10 * MM, 40 * MM), (0, -d - 2 * MM, -h * 0.28), "plastic_grey",
+	b.box((w, d, h), (0, -d / 2, -h / 2), "plastic_white", bevel=14 * MM)
+	b.box((w - 90 * MM, 10 * MM, 40 * MM), (0, -d - 2 * MM, -h * 0.78), "plastic_grey",
 	      bevel=5 * MM)
-	b.louvres((w - 120 * MM, h * 0.34, 12 * MM), (0, -d - 4 * MM, h * 0.12), 5,
+	b.louvres((w - 120 * MM, h * 0.34, 12 * MM), (0, -d - 4 * MM, -h * 0.38), 5,
 	          "plastic_white")
-	b.box((70 * MM, 4 * MM, 16 * MM), (w / 2 - 70 * MM, -d - 4 * MM, -h * 0.3),
+	b.box((70 * MM, 4 * MM, 16 * MM), (w / 2 - 70 * MM, -d - 4 * MM, -h * 0.8),
 	      "screen_off", bevel=1 * MM)
-	b.cyl(3 * MM, 3 * MM, (w / 2 - 110 * MM, -d - 5 * MM, -h * 0.3), "led_green", sides=8,
+	b.cyl(3 * MM, 3 * MM, (w / 2 - 110 * MM, -d - 5 * MM, -h * 0.8), "led_green", sides=8,
 	      rot=(90, 0, 0))
 	return b.finish("ac_indoor")
 
@@ -329,7 +331,7 @@ def make_ac_outdoor():
 
 
 def main():
-	bpy.ops.wm.read_factory_settings(use_empty=True)
+	clear_scene()
 	exporter.setup_studio()
 
 	makers = [
@@ -344,31 +346,18 @@ def main():
 		("loto", make_loto_tag), ("loto", make_loto_lock),
 	]
 
-	built = []
+	build = exporter.Build()
 	objects = {}
 	for folder, maker in makers:
-		obj = maker()
-		path = os.path.join(exporter.MODELS, folder, f"{obj.name}.glb")
-		_, size = exporter.export_glb([obj], path)
-		built.append((obj.name, tri_count(obj), size))
+		obj = build.emit(maker(), folder)
 		objects[obj.name] = obj
-
-	small = make_box("small")
-	exporter.export_glb([small], os.path.join(exporter.MODELS, "props", "box_small.glb"))
-	built.append((small.name, tri_count(small), 0))
-	objects["box_small"] = small
+	objects["box_small"] = build.emit(make_box("small"), "props")
 
 	_stage_previews(objects)
-
-	print("\n=== BUILT ===")
-	for name, tris, size in built:
-		print(f"{name:22s} {tris:6d} tris  {size / 1024:7.1f} KB")
-	print(f"{'TOTAL':22s} {sum(t for _, t, _ in built):6d} tris")
+	build.report(total=True)
 
 
 def _stage_previews(o):
-	import math
-
 	lid = o["laptop_lid"]
 	display = o["laptop_display"]
 	desk = o["desk"]

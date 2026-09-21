@@ -4,6 +4,7 @@ extends SceneTree
 #   godot --headless --script res://tools/godot/check_assets.gd
 
 const WORKER := "res://assets/models/characters/worker.glb"
+const MANIFEST := "res://assets/models/characters/worker.clips.json"
 const MATERIAL := "res://assets/palettes/dc_atlas.tres"
 const EXPECTED_CLIPS := [
 	"idle", "idle_look", "walk", "run", "carry_idle", "carry_walk",
@@ -15,6 +16,7 @@ var failures: Array[String] = []
 func _initialize() -> void:
 	_check_material()
 	_check_worker()
+	_check_manifest()
 	_check_models()
 
 	if failures.is_empty():
@@ -33,6 +35,10 @@ func _check_material() -> void:
 	for field in ["albedo_texture", "metallic_texture", "roughness_texture", "emission_texture"]:
 		if mat.get(field) == null:
 			failures.append("dc_atlas.tres: %s is empty" % field)
+	# a filtered atlas blends neighbouring texels into every face
+	if mat.texture_filter != BaseMaterial3D.TEXTURE_FILTER_NEAREST:
+		failures.append("dc_atlas.tres: texture_filter is %d, expected Nearest"
+			% mat.texture_filter)
 	print("material: dc_atlas.tres loaded, filter=%d" % mat.texture_filter)
 
 func _check_worker() -> void:
@@ -69,6 +75,21 @@ func _check_worker() -> void:
 		failures.append("worker.glb skeleton is not the expected Mixamo-style rig")
 	root.free()
 
+func _check_manifest() -> void:
+	var text := FileAccess.get_file_as_string(MANIFEST)
+	if text.is_empty():
+		failures.append("cannot read %s" % MANIFEST)
+		return
+	var data: Variant = JSON.parse_string(text)
+	if data == null or not data.has("clips"):
+		failures.append("%s is not a clip manifest" % MANIFEST)
+		return
+	for clip in EXPECTED_CLIPS:
+		if not data["clips"].has(clip):
+			failures.append("manifest is missing clip '%s'" % clip)
+	print("manifest: %d clips at %d fps" % [data["clips"].size(), data["fps"]])
+
+
 func _check_models() -> void:
 	var count := 0
 	var surfaces := 0
@@ -79,7 +100,7 @@ func _check_models() -> void:
 			continue
 		var root: Node = packed.instantiate()
 		for node in _walk(root):
-			if node is MeshInstance3D:
+			if node is MeshInstance3D and node.mesh != null:
 				surfaces += node.mesh.get_surface_count()
 				if node.mesh.get_surface_count() > 1:
 					failures.append("%s: %d surfaces, batching expects one" %

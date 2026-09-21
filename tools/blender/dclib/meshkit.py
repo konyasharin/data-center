@@ -8,7 +8,7 @@ import math
 
 import bmesh
 import bpy
-from mathutils import Euler, Matrix, Vector
+from mathutils import Euler, Vector
 
 from . import palette
 
@@ -56,6 +56,7 @@ class Builder:
 		return [f for f in self.bm.faces if f not in before]
 
 	def _paint(self, faces, mat, mat_faces=None):
+		matched = set()
 		for f in faces:
 			name = mat
 			if mat_faces:
@@ -63,10 +64,14 @@ class Builder:
 				for key, axis in AXES.items():
 					if key in mat_faces and n.dot(axis) > 0.99:
 						name = mat_faces[key]
+						matched.add(key)
 						break
 			u, v = palette.uv(name)
 			for loop in f.loops:
 				loop[self.uv].uv = (u, v)
+		if mat_faces:
+			missed = set(mat_faces) - matched
+			assert not missed, f"mat_faces {sorted(missed)} matched no face (rot applied?)"
 
 	def _place(self, verts, at, rot):
 		self._weigh(verts)
@@ -81,6 +86,7 @@ class Builder:
 	def box(self, size, at=(0, 0, 0), mat="steel", mat_faces=None, bevel=0.003,
 	        segments=1, rot=None):
 		"""Axis-aligned box centred on `at` (before `rot`), size is full extent."""
+		assert all(v > 0 for v in size), f"box needs positive extents, got {size}"
 		before = self._snapshot()
 		cube = bmesh.ops.create_cube(self.bm, size=1.0)
 		verts = cube["verts"]
@@ -89,12 +95,10 @@ class Builder:
 		if bevel > 0:
 			limit = min(size) * 0.45
 			edges = {e for v in verts for e in v.link_edges}
-			res = bmesh.ops.bevel(
+			bmesh.ops.bevel(
 				self.bm, geom=list(verts) + list(edges), offset=min(bevel, limit),
 				segments=segments, profile=0.5, affect="EDGES", clamp_overlap=True,
 			)
-			verts = list({v for f in res["faces"] for v in f.verts} | set(verts))
-			verts = [v for v in verts if v.is_valid]
 
 		faces = self._fresh(before)
 		self._paint(faces, mat, mat_faces)
@@ -234,3 +238,4 @@ def tri_count(obj):
 
 def clear_scene():
 	bpy.ops.wm.read_factory_settings(use_empty=True)
+	bpy.context.scene.render.fps = 24

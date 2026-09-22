@@ -49,6 +49,9 @@ const PLUG_OUT := 0.042
 # the face, so anything shorter than that plus the cord's own radius threads the run
 # through the plugs of every socket it passes.
 const CLEAR_OF_PLUGS := 0.090
+# must match make_cable_manager in tools/blender/build_room.py
+const MANAGER_RINGS := 5
+const MANAGER_SPAN := 0.120
 const SAG := 0.16            # of the span, how far a loose cord droops
 # must match tools/blender/dclib/units.py: the gaps between the duct's fingers
 const SPINE_PITCH := 0.09
@@ -160,6 +163,7 @@ func rack(index: int, xform: Transform3D) -> Dictionary:
 		"port_to": _port_pos.size(),
 		"clip_from": _clip_pos.size(),
 		"clip_to": _clip_pos.size(),
+		"rings": PackedVector3Array(),
 		"slot": _racks.size(),
 	}
 	_racks.append(entry)
@@ -229,6 +233,17 @@ func add_spine(entry: Dictionary, at: Vector3) -> void:
 		_clip_out.append((xform.basis * Vector3(0, 0, -1)).normalized())
 		_clip_load.append(0)
 	entry["clip_to"] = _clip_pos.size()
+
+
+func add_manager(entry: Dictionary, centre: Vector3) -> void:
+	## The rings of a 1U horizontal manager. Patch leads pass through the one nearest
+	## their socket's column before climbing, so the run up to a switch is several
+	## short bundles instead of one fan spreading from a single point.
+	var rings := PackedVector3Array()
+	for i in MANAGER_RINGS:
+		var x := (i / float(MANAGER_RINGS - 1) - 0.5) * MANAGER_SPAN
+		rings.append(entry["xform"] * (centre + Vector3(x, 0.0, 0.0)))
+	entry["rings"] = rings
 
 
 func _port(entry: Dictionary, _device: int, local: Vector3) -> void:
@@ -1010,7 +1025,18 @@ func _cable_points(from_port: int, to_port: int,
 	# stand on that line — which a full-width switch always has.
 	_step(points, _onto(leave, plane_to, normal))
 
-	_step(points, _onto(Vector3(leave.x, to.y, leave.z), plane_to, normal))
+	var far_kind: int = _bridge.KindOf(_bridge.OwnerOf(to_port))
+	var rings: PackedVector3Array = _racks[_port_rack[from_port]]["rings"]
+	if (far_kind == Kind.SWITCH or far_kind == Kind.PATCH) and not rings.is_empty():
+		var ring := rings[0]
+		for candidate in rings:
+			if absf(candidate.x - to.x) < absf(ring.x - to.x):
+				ring = candidate
+		_step(points, _onto(Vector3(leave.x, ring.y, leave.z), plane_to, normal))
+		_step(points, _onto(Vector3(ring.x, ring.y, ring.z), plane_to, normal))
+		_step(points, _onto(Vector3(to.x, ring.y, ring.z), plane_to, normal))
+	else:
+		_step(points, _onto(Vector3(leave.x, to.y, leave.z), plane_to, normal))
 	_step(points, _onto(to, plane_to, normal))
 	_step(points, to + _port_out[to_port] * _lead(to, plane_to, normal))
 	_step(points, to)

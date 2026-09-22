@@ -147,16 +147,27 @@ def make_blanking_panel(units=1):
 	return b.finish(f"blanking_panel_{units}u")
 
 
+MANAGER_RINGS = 5
+MANAGER_SPAN = 0.120          # centre to centre of the outermost rings
+
+
 def make_cable_manager():
+	"""1U horizontal manager: the rings that gather patch leads before they climb to
+	the switch above.
+
+	The rings sit within +-60 mm of centre rather than across the full 19". The
+	vertical ducts stand at +-105 mm, and rings reaching past them pass straight
+	through the ducts and everything dressed into them.
+	"""
 	b = Builder()
 	h = U - 3 * MM
 	w = RACK_PANEL_WIDTH
 	b.box((w, 16 * MM, h), (0, 8 * MM, 0), "rack_black", bevel=1.5 * MM)
-	for i in range(5):
-		x = -w / 2 + 62 * MM + i * (w - 124 * MM) / 4
-		b.cyl(16 * MM, 12 * MM, (x, -12 * MM, 0), "plastic_dark", sides=12, rot=(90, 0, 0),
+	for i in range(MANAGER_RINGS):
+		x = (i / (MANAGER_RINGS - 1) - 0.5) * MANAGER_SPAN
+		b.cyl(14 * MM, 10 * MM, (x, -12 * MM, 0), "plastic_dark", sides=12, rot=(90, 0, 0),
 		      caps=False)
-		b.box((12 * MM, 26 * MM, 8 * MM), (x, -12 * MM, -h / 2 + 6 * MM), "plastic_dark",
+		b.box((10 * MM, 24 * MM, 7 * MM), (x, -12 * MM, -h / 2 + 5 * MM), "plastic_dark",
 		      bevel=1 * MM)
 	return b.finish("cable_manager_1u")
 

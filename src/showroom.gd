@@ -612,10 +612,12 @@ func _populate(root: Node3D, index: int, entry: Dictionary) -> void:
 			# rack space: a layout that is not symmetric lands on the wrong side.
 			_wiring.add_panel(entry, Vector3(0, y + U * 0.5, -face_z - 0.001),
 				Wiring.Kind.PATCH, 24, 0.2073, -0.018026, 0.0)
-		elif slot == 39 or slot == 36:
-			# 1U cable managers used to sit here. Their rings reach 16 mm out across
-			# the full 19", straight through the ducts' holders — and the duct does
-			# their job anyway, so the slot takes a blank instead.
+		elif slot == 36:
+			# Directly under the switches: the rings gather the patch leads before they
+			# climb, which is what a fan of cords across a panel is solved with in life.
+			manager_tf.append(turned)
+			_wiring.add_manager(entry, Vector3(0, y + U * 0.5, -face_z - 0.012))
+		elif slot == 39:
 			blank_tf.append(centred)
 		elif slot == 38 or slot == 37:
 			switch_tf.append(turned)

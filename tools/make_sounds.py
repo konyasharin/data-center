@@ -54,7 +54,7 @@ def click(freq, length, decay, seed):
 	body = noise_burst(length, decay, 900, 6000, seed)
 	for i in range(len(body)):
 		t = i / RATE
-		body[i] += 0.5 * math.sin(TAU * freq * t) * math.exp(-decay * 2.2 * t / length)
+		body[i] = body[i] * 0.55 + 0.45 * math.sin(TAU * freq * t) * math.exp(-decay * 2.2 * t / length)
 	return body
 
 
@@ -62,9 +62,10 @@ TAU = math.pi * 2
 
 
 def main():
-	# Going in: the shell bottoming out, then the latch snapping over it.
-	seat = noise_burst(0.055, 5.0, 700, 4200, 11)
-	latch = click(2100, 0.040, 7.0, 12)
+	# Going in: the shell bottoming out, then the latch snapping over it. Kept low and
+	# short — a bright click repeated forty times a rack is what makes a sound tiring.
+	seat = noise_burst(0.045, 7.0, 380, 1700, 11)
+	latch = click(880, 0.030, 9.0, 12)
 	plug = seat + [0.0] * int(RATE * 0.012)
 	for i, v in enumerate(latch):
 		at = int(RATE * 0.052) + i
@@ -74,8 +75,8 @@ def main():
 	write("plug_in.wav", plug)
 
 	# Coming out: the latch pressed first, then the shell dragging clear.
-	press = click(1500, 0.028, 9.0, 21)
-	drag = noise_burst(0.075, 3.4, 400, 2600, 22)
+	press = click(620, 0.024, 11.0, 21)
+	drag = noise_burst(0.065, 5.0, 220, 1200, 22)
 	unplug = press + [0.0] * int(RATE * 0.010)
 	for i, v in enumerate(drag):
 		at = int(RATE * 0.034) + i

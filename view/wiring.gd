@@ -126,6 +126,9 @@ var _seating := -1
 var _seat_t := 0.0
 var _seat_in := true
 var _seat_offset := 0.0
+# a cord on its way out: pulled first, disconnected when the movement finishes
+var _pending_link := -1
+var _pending_slots := PackedInt32Array()
 
 
 # ------------------------------------------------------------------ building
@@ -575,13 +578,13 @@ func _unplug() -> void:
 	if link < 0:
 		_say("здесь ничего не воткнуто")
 		return
-	var touched := PackedInt32Array([_port_rack[_hover],
+	# Pulled now, disconnected when the movement ends. Cutting the cord on the click
+	# leaves nothing to animate — it simply vanishes.
+	_pending_link = link
+	_pending_slots = PackedInt32Array([_port_rack[_hover],
 		_port_rack[maxi(_bridge.OtherEnd(_hover), 0)]])
-	_undress(link)
-	_bridge.Disconnect(link)
 	_plugged(_hover, false)
 	_say("выдернуто")
-	refresh(touched)
 
 
 func _plugged(port: int, going_in: bool) -> void:
@@ -676,12 +679,19 @@ func _process(_delta: float) -> void:
 		_ghost.mesh = _ghost_mesh()
 	if _seating >= 0:
 		_seat_t += _delta / 0.16
-		if _seat_t >= 1.0:
+		var done := _seat_t >= 1.0
+		_seat_offset = (1.0 - minf(_seat_t, 1.0) if _seat_in else minf(_seat_t, 1.0)) * 0.05
+		var slots := PackedInt32Array([_port_rack[_seating]])
+		if done:
 			_seating = -1
 			_seat_t = 0.0
-		_seat_offset = (1.0 - _seat_t if _seat_in else _seat_t) * 0.05
-		refresh(PackedInt32Array([_port_rack[_seating]]) if _seating >= 0
-			else PackedInt32Array([]))
+			_seat_offset = 0.0
+			if _pending_link >= 0:
+				_undress(_pending_link)
+				_bridge.Disconnect(_pending_link)
+				_pending_link = -1
+				slots = _pending_slots
+		refresh(slots)
 
 
 ## Picking returns one number for two kinds of target: a port is its own index, a
@@ -744,12 +754,12 @@ func _cable_mesh(slot: int) -> ArrayMesh:
 	## not a node per cord), and only for the rack that changed.
 	if "--nocables" in OS.get_cmdline_user_args():
 		return null
-	var entry: Dictionary = _racks[slot]
 	var links: PackedInt32Array = _bridge.LiveLinks()
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	# Written straight into arrays rather than through SurfaceTool. SurfaceTool is a
+	# call per vertex plus a normal-generation pass, and a rack is tens of thousands
+	# of vertices — that is the stall felt on every unplug.
+	var mesh := _Buffer.new()
 
-	var any := false
 	var i := 0
 	while i < links.size():
 		var from_port: int = links[i]
@@ -759,25 +769,53 @@ func _cable_mesh(slot: int) -> ArrayMesh:
 		# exactly once
 		if _port_rack[from_port] != slot:
 			continue
-		any = true
 		var link: int = _bridge.LinkOf(from_port)
 		var colour := _line_colour(from_port)
-		_tube(st, _cable_points(from_port, to_port,
+		_tube(mesh, _cable_points(from_port, to_port,
 			_routes.get(link, PackedInt32Array())), colour)
-		_plug(st, from_port, colour, _seat_shift(from_port))
-		_plug(st, to_port, colour, _seat_shift(to_port))
+		_plug(mesh, from_port, colour, _seat_shift(from_port))
+		_plug(mesh, to_port, colour, _seat_shift(to_port))
 
-	if not any:
-		return null
-	st.generate_normals()
-	return st.commit()
+	return mesh.commit()
+
+
+class _Buffer:
+	## Vertices, normals and colours for one rack's cords, plus the one call that
+	## turns them into a mesh.
+	var verts := PackedVector3Array()
+	var norms := PackedVector3Array()
+	var cols := PackedColorArray()
+
+	func tri(a: Vector3, b: Vector3, c: Vector3, na: Vector3, nb: Vector3, nc: Vector3,
+			colour: Color) -> void:
+		verts.append(a)
+		verts.append(b)
+		verts.append(c)
+		norms.append(na)
+		norms.append(nb)
+		norms.append(nc)
+		cols.append(colour)
+		cols.append(colour)
+		cols.append(colour)
+
+	func commit() -> ArrayMesh:
+		if verts.is_empty():
+			return null
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		arrays[Mesh.ARRAY_NORMAL] = norms
+		arrays[Mesh.ARRAY_COLOR] = cols
+		var mesh := ArrayMesh.new()
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		return mesh
 
 
 func _seat_shift(port: int) -> float:
 	return _seat_offset if port == _seating else 0.0
 
 
-func _plug(st: SurfaceTool, port: int, colour: Color, shift := 0.0) -> void:
+func _plug(mesh: _Buffer, port: int, colour: Color, shift := 0.0) -> void:
 	## The connector on the end of the cord. Without it the cable is a bare tube
 	## disappearing into a hole, and no cord ends like that — the moulded body sitting
 	## in the socket is most of what makes it read as plugged in rather than poked in.
@@ -794,38 +832,39 @@ func _plug(st: SurfaceTool, port: int, colour: Color, shift := 0.0) -> void:
 	# cord makes it read as the cord swelling up at the end. Clear-ish grey for a
 	# network plug, near-black for a power one, as the real parts are.
 	var shell := PLUG_NETWORK if network else PLUG_POWER
-	_prism(st, _port_pos[port] + seat + normal * (body * 0.5 - 0.004), basis,
+	_prism(mesh, _port_pos[port] + seat + normal * (body * 0.5 - 0.004), basis,
 		Vector3(0.0055 if network else 0.0060, 0.0045 if network else 0.0050, body * 0.5),
 		shell)
 	# the boot, which is the one part coloured like the cable
-	_prism(st, _port_pos[port] + seat + normal * (body + 0.004), basis,
+	_prism(mesh, _port_pos[port] + seat + normal * (body + 0.004), basis,
 		Vector3(0.0038, 0.0038, 0.007), colour.darkened(0.35))
 	if network:
 		# the latch tab, which is what says "network" at a glance
-		_prism(st, _port_pos[port] + seat + normal * (body * 0.5) + basis.y * 0.0055, basis,
+		_prism(mesh, _port_pos[port] + seat + normal * (body * 0.5) + basis.y * 0.0055, basis,
 			Vector3(0.0022, 0.0018, body * 0.34), shell.lightened(0.10))
 
 
-func _prism(st: SurfaceTool, centre: Vector3, basis: Basis, half: Vector3,
+func _prism(mesh: _Buffer, centre: Vector3, basis: Basis, half: Vector3,
 		colour: Color) -> void:
-	# Flat-shaded, and in its own smoothing group. generate_normals() averages the
-	# normals of vertices that share a position, so a connector sitting inside the
-	# cord and the socket picks up their normals too and ends up lit as if it were
-	# translucent.
-	st.set_smooth_group(-1)
+	## Flat-shaded, with the face normal given rather than averaged. Averaged, a
+	## connector sitting inside the cord and the socket picks up their normals and is
+	## lit as if it were made of glass.
 	var corners := PackedVector3Array()
 	for i in 8:
 		corners.append(centre + basis * Vector3(
 			half.x * (1.0 if (i & 1) else -1.0),
 			half.y * (1.0 if (i & 2) else -1.0),
 			half.z * (1.0 if (i & 4) else -1.0)))
-	# Wound the opposite way round to _solid's boxes. Godot takes clockwise as the
-	# front face, and a connector wound the other way is culled to its inside — which
-	# is exactly the "translucent, like the model is inside out" look.
-	for face in [[0, 2, 6, 4], [1, 5, 7, 3], [0, 4, 5, 1],
-			[2, 3, 7, 6], [0, 1, 3, 2], [4, 6, 7, 5]]:
-		_quad(st, corners[face[0]], corners[face[1]], corners[face[2]], corners[face[3]],
-			colour)
+	# Wound the opposite way round to _solid's boxes: Godot takes clockwise as the
+	# front face, and wound the other way the part is culled to its inside.
+	var faces := [[0, 2, 6, 4], [1, 5, 7, 3], [0, 4, 5, 1],
+		[2, 3, 7, 6], [0, 1, 3, 2], [4, 6, 7, 5]]
+	var axes := [-basis.x, basis.x, -basis.y, basis.y, -basis.z, basis.z]
+	for f in faces.size():
+		var face: Array = faces[f]
+		var n: Vector3 = axes[f]
+		_quad(mesh, corners[face[0]], corners[face[1]], corners[face[2]],
+			corners[face[3]], colour, n, n, n, n)
 
 
 func _ghost_mesh() -> ArrayMesh:
@@ -834,8 +873,7 @@ func _ghost_mesh() -> ArrayMesh:
 	var camera := get_viewport().get_camera_3d()
 	if camera == null:
 		return null
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var mesh := _Buffer.new()
 
 	# Previewed exactly the way it will be built, so the shape is not a surprise once
 	# the second socket is clicked.
@@ -858,9 +896,8 @@ func _ghost_mesh() -> ArrayMesh:
 		_step(loose, camera.global_position + (-camera.global_transform.basis.z) * 0.5)
 		points = _smooth(_chamfer(loose, 0.010))
 
-	_tube(st, points, COLOUR["held"])
-	st.generate_normals()
-	return st.commit()
+	_tube(mesh, points, COLOUR["held"])
+	return mesh.commit()
 
 
 func _cable_points(from_port: int, to_port: int,
@@ -981,29 +1018,13 @@ func _smooth(points: PackedVector3Array) -> PackedVector3Array:
 	return out
 
 
-func _run(st: SurfaceTool, from: Vector3, from_out: Vector3, to: Vector3,
-		to_out: Vector3, colour: Color) -> void:
-	# the cord being dragged has no rack to route through yet, so it just droops
-	var span := from.distance_to(to)
-	var lift := from + from_out * minf(0.06, span * 0.3)
-	var land := to + to_out * minf(0.06, span * 0.3)
-	var sag := Vector3.DOWN * (span * SAG)
-
-	var points := PackedVector3Array()
-	var steps := 9
-	for i in steps + 1:
-		var t := float(i) / steps
-		points.append(_bezier(from, lift + sag, land + sag, to, t))
-	_tube(st, points, colour)
-
-
 func _bezier(a: Vector3, b: Vector3, c: Vector3, d: Vector3, t: float) -> Vector3:
 	var u := 1.0 - t
 	return (a * (u * u * u) + b * (3.0 * u * u * t) + c * (3.0 * u * t * t)
 		+ d * (t * t * t))
 
 
-func _tube(st: SurfaceTool, points: PackedVector3Array, colour: Color) -> void:
+func _tube(mesh: _Buffer, points: PackedVector3Array, colour: Color) -> void:
 	## Square section: four sides read as round at cable thickness and cost a third of
 	## what a real ring does, across a hall full of cords.
 	##
@@ -1032,9 +1053,9 @@ func _tube(st: SurfaceTool, points: PackedVector3Array, colour: Color) -> void:
 				push_warning("cable reverses at %v (dot %.2f) in a run of %d" % [
 					points[i], d1.dot(d2), points.size()])
 
-	st.set_smooth_group(0)
 	var sides := 4
 	var rings: Array[PackedVector3Array] = []
+	var normals: Array[PackedVector3Array] = []
 	var right := Vector3.ZERO
 	for i in points.size():
 		var ahead: Vector3 = points[mini(i + 1, points.size() - 1)]
@@ -1055,10 +1076,14 @@ func _tube(st: SurfaceTool, points: PackedVector3Array, colour: Color) -> void:
 		var up := right.cross(dir).normalized()
 
 		var ring := PackedVector3Array()
+		var ring_n := PackedVector3Array()
 		for s in sides:
 			var a := TAU * s / sides
-			ring.append(points[i] + (right * cos(a) + up * sin(a)) * CABLE_R)
+			var out_dir := (right * cos(a) + up * sin(a)).normalized()
+			ring.append(points[i] + out_dir * CABLE_R)
+			ring_n.append(out_dir)
 		rings.append(ring)
+		normals.append(ring_n)
 
 	for i in rings.size() - 1:
 		# A run that doubles back has no continuous section through the turn; carrying
@@ -1069,7 +1094,8 @@ func _tube(st: SurfaceTool, points: PackedVector3Array, colour: Color) -> void:
 			continue
 		for s in sides:
 			var n := (s + 1) % sides
-			_quad(st, rings[i][s], rings[i][n], rings[i + 1][n], rings[i + 1][s], colour)
+			_quad(mesh, rings[i][s], rings[i][n], rings[i + 1][n], rings[i + 1][s], colour,
+				normals[i][s], normals[i][n], normals[i + 1][n], normals[i + 1][s])
 
 
 func _dedupe(points: PackedVector3Array) -> PackedVector3Array:
@@ -1082,11 +1108,18 @@ func _dedupe(points: PackedVector3Array) -> PackedVector3Array:
 	return out
 
 
-func _quad(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, d: Vector3,
-		colour: Color) -> void:
+func _st_quad(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, d: Vector3) -> void:
+	## For the handful of meshes built once at start-up, where SurfaceTool's cost does
+	## not matter and its normal generation is convenient.
 	for v in [a, b, c, a, c, d]:
-		st.set_color(colour)
+		st.set_color(Color.WHITE)
 		st.add_vertex(v)
+
+
+func _quad(mesh: _Buffer, a: Vector3, b: Vector3, c: Vector3, d: Vector3,
+		colour: Color, na: Vector3, nb: Vector3, nc: Vector3, nd: Vector3) -> void:
+	mesh.tri(a, b, c, na, nb, nc, colour)
+	mesh.tri(a, c, d, na, nc, nd, colour)
 
 
 func _instances(count: int, mesh: Mesh) -> MultiMesh:
@@ -1111,10 +1144,9 @@ func _pip_mesh(radius: float) -> Mesh:
 		var p1 := Vector3(cos(a) * radius, sin(a) * radius, 0.0)
 		var p2 := Vector3(cos(b) * radius, sin(b) * radius, 0.0)
 		# lens face, then the rim, so it catches an edge highlight
-		_quad(st, Vector3(0, 0, depth), p1 + Vector3(0, 0, depth),
-			p2 + Vector3(0, 0, depth), Vector3(0, 0, depth), Color.WHITE)
-		_quad(st, p1, p2, p2 + Vector3(0, 0, depth), p1 + Vector3(0, 0, depth),
-			Color.WHITE)
+		_st_quad(st, Vector3(0, 0, depth), p1 + Vector3(0, 0, depth),
+			p2 + Vector3(0, 0, depth), Vector3(0, 0, depth))
+		_st_quad(st, p1, p2, p2 + Vector3(0, 0, depth), p1 + Vector3(0, 0, depth))
 	st.generate_normals()
 	return st.commit()
 
@@ -1159,8 +1191,7 @@ func _solid(st: SurfaceTool, centre: Vector3, half: Vector3) -> void:
 	var faces := [[4, 6, 2, 0], [3, 7, 5, 1], [1, 5, 4, 0],
 		[6, 7, 3, 2], [2, 3, 1, 0], [5, 7, 6, 4]]
 	for face in faces:
-		_quad(st, corners[face[0]], corners[face[1]], corners[face[2]], corners[face[3]],
-			Color.WHITE)
+		_st_quad(st, corners[face[0]], corners[face[1]], corners[face[2]], corners[face[3]])
 
 
 func _facing(at: Vector3, normal: Vector3) -> Transform3D:

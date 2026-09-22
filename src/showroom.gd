@@ -547,8 +547,13 @@ func _fittings(root: Node3D, entry: Dictionary, strips_per_feed: int) -> void:
 			var pos := Vector3(hand * STRIP_X, PLINTH + 0.1,
 				CHANNEL_Z + 0.06 - i * 0.075)
 			strip_tf.append(Transform3D(Basis(Vector3.UP, PI), pos))
+			# Feed A always on the same side of the *hall*, not of the cabinet. The
+			# second row faces the other way, so keying off the local side puts A left
+			# in one row and right in the other, and a walk down the aisle shows both
+			# colours on both sides.
+			var world_side: float = (entry["xform"].basis * Vector3(hand, 0, 0)).x
 			_wiring.add_strip(entry, pos,
-				Wiring.FeedId.A if hand < 0 else Wiring.FeedId.B)
+				Wiring.FeedId.A if world_side < 0.0 else Wiring.FeedId.B)
 	_fill(strips, strip_tf)
 
 	var spines := _multimesh("hardware/cable_spine", root)

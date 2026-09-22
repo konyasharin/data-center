@@ -164,6 +164,7 @@ func rack(index: int, xform: Transform3D) -> Dictionary:
 		"clip_from": _clip_pos.size(),
 		"clip_to": _clip_pos.size(),
 		"rings": PackedVector3Array(),
+		"net_side": 1.0,      # the duct network shares, which is feed B's
 		"slot": _racks.size(),
 	}
 	_racks.append(entry)
@@ -201,6 +202,10 @@ func add_strip(entry: Dictionary, at: Vector3, feed: int, outlets := OUTLETS) ->
 		entry["feed_a"].append(device)
 	else:
 		entry["feed_b"].append(device)
+		# network follows feed B, so it has to know which side that landed on — the
+		# two rows face opposite ways and the feeds are keyed to the hall, not the
+		# cabinet
+		entry["net_side"] = signf(at.x) if not is_zero_approx(at.x) else 1.0
 	return device
 
 
@@ -362,7 +367,9 @@ func _auto_route(entry: Dictionary, from_port: int, to_port: int) -> PackedInt32
 	# which half of the panel they land on fills each duct with two colours: the run
 	# is barely shorter and the bundle is twice as hard to read. They all take the
 	# same duct as feed B, so the left one carries feed A and nothing else.
-	var side := signf(b.x) if _port_line[from_port] == Line.POWER else 1.0
+	var side: float = entry["net_side"]
+	if _port_line[from_port] == Line.POWER:
+		side = signf(b.x)
 
 	# A gap outside the span between the two ends would send the cord down past it and
 	# back up — a 180 degree turn, which is both wrong and what threw spikes off the
@@ -374,17 +381,36 @@ func _auto_route(entry: Dictionary, from_port: int, to_port: int) -> PackedInt32
 		return PackedInt32Array()
 
 	# A switch or patch panel is a full 19" wide, so the duct stands on the same line
-	# as some of its sockets. Dressing the cord in level with the panel walks it
-	# through the plugs standing there; held only at the server end, it rises in front
-	# of the panel instead and reaches its socket past them.
+	# as some of its sockets: dressed in level with the panel, a cord walks through
+	# the plugs standing there. It runs the duct as far as the horizontal manager
+	# under the panel and leaves it there — held the whole way up, but clear of the
+	# sockets. With no manager it is held at the server end only.
 	var far_kind: int = _bridge.KindOf(_bridge.OwnerOf(to_port))
 	if far_kind == Kind.SWITCH or far_kind == Kind.PATCH:
-		return PackedInt32Array([enter])
+		var rings: PackedVector3Array = entry["rings"]
+		if rings.is_empty():
+			return PackedInt32Array([enter])
+		var top := _nearest_clip(entry, inv, side, (inv * rings[0]).y, low, high)
+		if top < 0 or top == enter:
+			return PackedInt32Array([enter])
+		return _clip_span(entry, enter, top)
 
 	var leave := _nearest_clip(entry, inv, side, b.y, low, high)
 	if leave < 0 or leave == enter:
 		return PackedInt32Array([enter])
 	return PackedInt32Array([enter, leave])
+
+
+func _clip_span(entry: Dictionary, from_clip: int, to_clip: int) -> PackedInt32Array:
+	## Every gap between the two, so a cord that runs a long way up the duct is held
+	## along its whole length instead of passing the holders by.
+	var span := PackedInt32Array()
+	var step := 1 if to_clip >= from_clip else -1
+	var clip := from_clip
+	while clip != to_clip + step:
+		span.append(clip)
+		clip += step
+	return span
 
 
 func _nearest_clip(entry: Dictionary, inv: Transform3D, side: float, height: float,

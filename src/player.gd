@@ -40,8 +40,19 @@ func _ready() -> void:
 	_camera.fov = 70.0
 	_camera.far = 300.0
 	add_child(_camera)
+	# Explicitly, not by being the first camera in the room: the laptop builds its own
+	# camera while the shed does, so whoever enters the tree first would otherwise own
+	# the view and the game would open looking at a desk.
+	_camera.make_current()
 
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+func eye() -> Camera3D:
+	## The camera the player looks through. Anything that takes the view away — a
+	## screen, a cutscene — has to be handed this rather than read whichever camera
+	## happens to be current, or it gives the view back to itself.
+	return _camera
 
 
 func _unhandled_input(event: InputEvent) -> void:

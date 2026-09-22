@@ -123,6 +123,9 @@ func _ready() -> void:
 	if _laptop != null:
 		_laptop.attach_player(player)
 
+	if "--laptop" in OS.get_cmdline_user_args():
+		_check_laptop(player)
+
 
 const SHOTS := [
 	["hall_aisle", Vector3(3.2, 1.62, 0.0), Vector3(-2.0, 1.35, 0.0)],
@@ -892,6 +895,55 @@ func _catalogue() -> void:
 
 
 # ------------------------------------------------------------------- people
+
+func _check_laptop(player: ShowroomPlayer) -> void:
+	## --laptop: sit down and get up again through the real input path. Getting stuck
+	## at a screen is the worst bug a diegetic interface can have — the player cannot
+	## even quit to the menu, because there is no menu — so it is worth a check that
+	## presses the keys rather than calls the methods.
+	# standing at the desk, facing the screen — the state the prompt is written for
+	var pose := _laptop.seat_pose()
+	var centre: Vector3 = pose[1]
+	var out: Vector3 = (pose[0] - centre).normalized()
+	player.position = Vector3(centre.x + out.x * 0.7, SHED_ORIGIN.y, centre.z + out.z * 0.7)
+	player.rotation.y = atan2(out.x, out.z)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var numbers := _laptop.reach_numbers()
+	print("laptop: до экрана %.2f м, прицел %.2f (нужно <= %.1f и >= %.2f)"
+		% [numbers[0], numbers[1], Laptop.REACH, Laptop.AIM])
+	print("laptop: в руках %s" % _laptop.prompt())
+	print("laptop: сел %s" % _laptop.try_open())
+	_report_laptop(player, "после E")
+	await _press(KEY_ESCAPE)
+	_report_laptop(player, "после Esc")
+
+	# E is the other way out, and it goes through a different handler: the scene's,
+	# which offers the key to the laptop before it opens a rack door
+	await _press(KEY_E)
+	_report_laptop(player, "сел по E")
+	await _press(KEY_E)
+	_report_laptop(player, "встал по E")
+	get_tree().quit()
+
+
+func _press(key: int) -> void:
+	for pressed in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = key
+		event.physical_keycode = key
+		event.pressed = pressed
+		Input.parse_input_event(event)
+		await get_tree().process_frame
+	await get_tree().process_frame
+
+
+func _report_laptop(player: ShowroomPlayer, when: String) -> void:
+	var camera := get_viewport().get_camera_3d()
+	print("   %s: открыт %s, заморожен %s, мышь %d, камера %s" % [
+		when, _laptop.is_open(), player.frozen, Input.mouse_mode,
+		"ноутбук" if camera != null and camera.get_parent() == _laptop else "игрок"])
+
 
 func _check_shop() -> void:
 	## --shop: buy one of everything the catalogue offers, finish the work the way a

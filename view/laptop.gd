@@ -10,8 +10,11 @@ extends Node3D
 ## cursor drawn inside the viewport drifts away from the one the player is moving.
 
 const SCREEN := Vector2i(960, 600)
-const REACH := 1.5           # metres you can be from the desk and still sit down
-const AIM := 0.55            # how far off the screen you may be looking
+const REACH := 1.6           # metres you can be from the desk and still sit down
+# How far off the screen you may be looking. Generous on purpose: a laptop on a desk
+# is well below eye level, so standing right at it you are looking down at it by a
+# long way, and a tighter cone means the prompt only appears if you stoop.
+const AIM := 0.32
 
 var _display: Node3D
 var _panel: MeshInstance3D
@@ -19,7 +22,7 @@ var _viewport: SubViewport
 var _os: LaptopOS
 var _seat: Camera3D
 var _player: ShowroomPlayer
-var _was: Camera3D
+var _eye: Camera3D
 var _open := false
 
 
@@ -55,13 +58,17 @@ func setup(display: Node3D, estate: EstateBridge, site: Object) -> void:
 
 	_seat = Camera3D.new()
 	_seat.fov = 42.0
-	_seat.current = false
 	add_child(_seat)
+	# After entering the tree, not before: a camera that is the first one in the
+	# viewport becomes the current one on the way in, and this one is built while the
+	# shed is, long before the player exists. The room would open looking at the desk.
+	_seat.current = false
 	_place_seat()
 
 
 func attach_player(player: ShowroomPlayer) -> void:
 	_player = player
+	_eye = player.eye()
 
 
 func is_open() -> bool:
@@ -83,7 +90,6 @@ func try_open() -> bool:
 	if not _within_reach():
 		return false
 	_open = true
-	_was = get_viewport().get_camera_3d()
 	_seat.current = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	if _player != null:
@@ -96,8 +102,8 @@ func close() -> void:
 		return
 	_open = false
 	_seat.current = false
-	if _was != null and is_instance_valid(_was):
-		_was.current = true
+	if _eye != null and is_instance_valid(_eye):
+		_eye.make_current()
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if _player != null:
 		_player.frozen = false
@@ -176,10 +182,23 @@ func _place_seat() -> void:
 	_seat.look_at(centre, Vector3.UP)
 
 
+func reach_numbers() -> Array:
+	## How far the eye is from the screen and how squarely it is pointed at it, which
+	## is what decides whether the prompt appears. Judging a cone by eye is how it ends
+	## up either unusable or triggering from across the room.
+	var camera := _eye if _eye != null else get_viewport().get_camera_3d()
+	if _panel == null or camera == null:
+		return []
+	var centre := _panel.global_transform * _panel.get_aabb().get_center()
+	var to_screen := (centre - camera.global_position).normalized()
+	return [camera.global_position.distance_to(centre),
+		-camera.global_transform.basis.z.dot(to_screen)]
+
+
 func _within_reach() -> bool:
 	if _panel == null:
 		return false
-	var camera := _was if _open else get_viewport().get_camera_3d()
+	var camera := _eye if _eye != null else get_viewport().get_camera_3d()
 	if camera == null or not is_instance_valid(camera):
 		return false
 	var box := _panel.get_aabb()

@@ -62,7 +62,7 @@ const COLOUR := {
 	"hover": Color(1.0, 1.0, 1.0),
 	"held": Color(1.0, 0.85, 0.2),
 	"blocked": Color(1.0, 0.25, 0.2),
-	"clip_free": Color(0.20, 0.22, 0.26),
+	"clip_free": Color(0.42, 0.45, 0.52),
 	"clip_used": Color(0.30, 0.34, 0.40),
 	"stuffed": Color(0.80, 0.45, 0.10),
 	# lit while a cord is in hand
@@ -75,8 +75,8 @@ const STATUS_COLOUR := {
 	"dark": Color(0.35, 0.05, 0.05),
 	"offline": Color(0.55, 0.2, 0.75),
 	"exposed": Color(0.95, 0.62, 0.08),
-	"single": Color(0.85, 0.78, 0.15),
-	"ok": Color(0.15, 0.75, 0.25),
+	"single": Color(0.62, 0.56, 0.10),
+	"ok": Color(0.10, 0.42, 0.16),
 }
 
 var _bridge: CablingBridge
@@ -197,7 +197,10 @@ func add_spine(entry: Dictionary, at: Vector3) -> void:
 	## be dressed in, and the numbers match tools/blender/dclib/units.py.
 	var xform: Transform3D = entry["xform"]
 	for i in SPINE_CLIPS:
-		var local := at + Vector3(0.0, SPINE_BASE + i * SPINE_PITCH, -0.030)
+		# 48 mm out, at the mouth of the duct: the fingers reach 51 mm and pins sunk
+		# inside them are simply not visible, which is what made the clips look like
+		# flat squares — the only part showing was their front face.
+		var local := at + Vector3(0.0, SPINE_BASE + i * SPINE_PITCH, -0.048)
 		_clip_pos.append(xform * local)
 		_clip_out.append((xform.basis * Vector3(0, 0, -1)).normalized())
 		_clip_load.append(0)
@@ -234,8 +237,8 @@ func build() -> void:
 			% [expected, _port_pos.size()])
 		return
 
-	print("wiring: %d racks, %d servers, %d ports" % [
-		_racks.size(), _servers.size(), _port_pos.size()])
+	print("wiring: %d racks, %d servers, %d ports, %d clips" % [
+		_racks.size(), _servers.size(), _port_pos.size(), _clip_pos.size()])
 
 	_markers = MultiMeshInstance3D.new()
 	_markers.multimesh = _instances(_port_pos.size(), _pad_mesh(MARKER))
@@ -248,7 +251,7 @@ func build() -> void:
 	add_child(_clips)
 
 	_status = MultiMeshInstance3D.new()
-	_status.multimesh = _instances(_servers.size(), _pad_mesh(0.013))
+	_status.multimesh = _instances(_servers.size(), _pad_mesh(0.009))
 	_status.material_override = _flat_material()
 	add_child(_status)
 
@@ -761,7 +764,7 @@ func _step(points: PackedVector3Array, at: Vector3) -> void:
 func _lane(port: int) -> float:
 	# How deep inside the gap a cord sits. Kept small: the dip into the duct and back
 	# out is a visible zigzag, and a deep one loops around the finger.
-	return 0.004 + (port % 6) * 0.005
+	return 0.008 + (port % 6) * 0.004
 
 
 
@@ -938,13 +941,19 @@ func _pad_mesh(size: float) -> Mesh:
 
 
 func _clip_mesh() -> Mesh:
-	## A proper clip, not a square: a stalk standing off the duct with a lip bent over
-	## the top, which is what a cord is pushed in behind. Built here rather than in
-	## Blender because it is one part in two boxes and it has to be tinted per instance.
+	## A pair of pins with heads on them, 13 mm apart, sticking 22 mm out of the duct.
+	## A cord goes in between them and the heads keep it there — which is the shape the
+	## thing is named after. A block with a bump on it, which is what was here before,
+	## reads as a square from any distance a player actually stands at.
+	##
+	## Built in code rather than Blender: it is four boxes and it has to be tinted per
+	## instance, which a glb surface cannot be.
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	_solid(st, Vector3(0, -0.003, 0.010), Vector3(0.0045, 0.014, 0.010))
-	_solid(st, Vector3(0, 0.009, 0.018), Vector3(0.0045, 0.005, 0.0025))
+	for side in [-1.0, 1.0]:
+		var y: float = side * 0.008
+		_solid(st, Vector3(0, y, 0.014), Vector3(0.0026, 0.0026, 0.014))
+		_solid(st, Vector3(0, y, 0.030), Vector3(0.0048, 0.0048, 0.003))
 	st.generate_normals()
 	return st.commit()
 
@@ -958,8 +967,11 @@ func _solid(st: SurfaceTool, centre: Vector3, half: Vector3) -> void:
 			half.x * (1.0 if (i & 1) else -1.0),
 			half.y * (1.0 if (i & 2) else -1.0),
 			half.z * (1.0 if (i & 4) else -1.0)))
-	var faces := [[0, 2, 6, 4], [1, 5, 7, 3], [0, 4, 5, 1],
-		[2, 3, 7, 6], [0, 1, 3, 2], [4, 6, 7, 5]]
+	# Wound so the faces look outward. Reversed, the whole part is inside out: back-face
+	# culling drops every surface that should be visible and leaves a flat silhouette —
+	# which is exactly why these read as squares no matter what shape they were given.
+	var faces := [[4, 6, 2, 0], [3, 7, 5, 1], [1, 5, 4, 0],
+		[6, 7, 3, 2], [2, 3, 1, 0], [5, 7, 6, 4]]
 	for face in faces:
 		_quad(st, corners[face[0]], corners[face[1]], corners[face[2]], corners[face[3]],
 			Color.WHITE)
@@ -983,6 +995,12 @@ func _part_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.vertex_color_use_as_albedo = true
 	mat.roughness = 0.55
+	# It is pitch dark behind a rack. Lit only by the room, a part this size is a black
+	# smudge; a little emission keeps the shading that shows its shape while making sure
+	# there is something to see at all.
+	mat.emission_enabled = true
+	mat.emission = Color(1, 1, 1)
+	mat.emission_energy_multiplier = 0.30
 	return mat
 
 

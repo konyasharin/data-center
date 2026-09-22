@@ -93,6 +93,7 @@ const SHOTS := [
 	["rear_angle", Vector3(0.90, 1.70, -2.90), Vector3(-1.20, 1.25, -2.05)],
 	["duct_open", Vector3(-1.75, 1.45, -2.30), Vector3(-1.78, 1.30, -1.60)],
 	["duct_edge", Vector3(-2.05, 1.30, -2.62), Vector3(-2.15, 1.24, -1.95)],
+	["clip_macro", Vector3(-2.19, 1.16, -2.28), Vector3(-2.21, 1.17, -1.94)],
 	["lod_near", Vector3(0.55, 1.45, -0.35), Vector3(-0.30, 1.30, -1.00)],
 	["lod_band", Vector3(2.60, 1.60, 1.90), Vector3(-0.60, 1.25, -0.90)],
 	["lod_far", Vector3(4.60, 1.70, 3.40), Vector3(-1.00, 1.20, -1.10)],

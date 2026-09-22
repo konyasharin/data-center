@@ -888,9 +888,12 @@ func _swing_door() -> void:
 
 
 func _crosshair(layer: CanvasLayer) -> void:
+	## Every piece has to ignore the mouse. A Control defaults to swallowing mouse
+	## events, and this one sits exactly under the captured cursor in the middle of the
+	## screen — it ate every motion event and the camera stopped turning.
 	var dot := ColorRect.new()
 	dot.color = Color(1, 1, 1, 0.85)
-	dot.custom_minimum_size = Vector2(3, 3)
+	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	dot.set_anchors_preset(Control.PRESET_CENTER)
 	dot.size = Vector2(3, 3)
 	dot.position = Vector2(-1.5, -1.5)
@@ -898,6 +901,7 @@ func _crosshair(layer: CanvasLayer) -> void:
 	for horizontal in [true, false]:
 		var bar := ColorRect.new()
 		bar.color = Color(1, 1, 1, 0.35)
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var length := 11.0
 		bar.size = Vector2(length, 1) if horizontal else Vector2(1, length)
 		bar.set_anchors_preset(Control.PRESET_CENTER)
@@ -912,6 +916,7 @@ func _hud() -> void:
 	_crosshair(layer)
 	_hud_label = Label.new()
 	_hud_label.position = Vector2(16, 12)
+	_hud_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hud_label.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0))
 	_hud_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
 	_hud_label.add_theme_constant_override("outline_size", 6)

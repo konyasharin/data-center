@@ -40,6 +40,7 @@ const CHANNEL_Z := -0.44
 const HALL := Vector2i(20, 14)      # floor tiles
 const LOD_SWITCH := 9.0              # metres: detailed chassis inside, lod1 beyond
 const SHED_ORIGIN := Vector3(0, 0, 16.0)
+const NAV_SOURCE := "nav_source"
 
 var _label_font: Font
 var _cabling := CablingBridge.new()
@@ -50,6 +51,7 @@ var _crew: Crew
 # on. Both are what the shop offers and what a worker is sent to.
 var _bays: Array[Dictionary] = []
 var _spots: Array[Dictionary] = []
+var _tags := {}                     # job -> the sign standing over it while it runs
 var _doors: Array[Dictionary] = []
 var _wiring: Wiring
 var _hud_label: Label
@@ -66,6 +68,7 @@ func _ready() -> void:
 	_prewire()
 	_catalogue()
 	_people()
+	_navigation()
 	_shift()
 	_hud()
 
@@ -96,8 +99,20 @@ func _ready() -> void:
 		for kind in [0, 1]:
 			var spots := free_spots(kind)
 			if not spots.is_empty():
-				print("заказано %d -> работа %d"
-					% [kind, order(kind, spots[0]["place"], spots[0]["slot"])])
+				print("заказано %d -> работа %d, место %s"
+					% [kind, order(kind, spots[0]["place"], spots[0]["slot"]),
+						spots[0]["label"]])
+		_watch_bays()
+		_check_nav()
+
+	if "--pair" in OS.get_cmdline_user_args():
+		# only a cabinet, so both of them are free to go to it: moving one is the work
+		# that takes two, and nothing else shows that the second one joins
+		var spots := free_spots(1)
+		if not spots.is_empty():
+			var job := order(1, spots[0]["place"], spots[0]["slot"])
+			print("заказан шкаф -> работа %d" % job)
+			_watch_pair(job)
 
 	if "--shop" in OS.get_cmdline_user_args():
 		_check_shop()
@@ -730,10 +745,13 @@ func _populate(root: Node3D, index: int, entry: Dictionary, fill_override := -1)
 func _shed() -> void:
 	var shed := Node3D.new()
 	shed.position = SHED_ORIGIN
+	shed.add_to_group(NAV_SOURCE)
 	add_child(shed)
 
 	shed.add_child(Assets.instance("building/shed_shell"))
-	_static_box(Vector3(8.0, 0.2, 6.0), SHED_ORIGIN + Vector3(0, -0.1, 0))
+	# The slab is a collider with no mesh of its own, so the navigation bake has to be
+	# told about it or there is nothing in the room to walk on.
+	_static_box(Vector3(8.0, 0.2, 6.0), SHED_ORIGIN + Vector3(0, -0.1, 0)) 		.add_to_group(NAV_SOURCE)
 
 	var gate := Assets.instance("building/shed_gate")
 	gate.position = Vector3(-1.1, 0, -2.8)
@@ -896,6 +914,56 @@ func _catalogue() -> void:
 
 # ------------------------------------------------------------------- people
 
+func _watch_pair(job: int) -> void:
+	for i in 12:
+		await get_tree().create_timer(1.0).timeout
+		print("   %2d с: у шкафа %d чел., готово %d%%"
+			% [i + 1, _crew.at_job(job), roundi(_estate.JobProgressOf(job) * 100.0)])
+		if _estate.JobStateOf(job) == 2:
+			break
+	get_tree().quit()
+
+
+func _check_nav() -> void:
+	## A path that bends has corners; one that goes through the furniture has two
+	## points. Printing the count is the only way to tell the map is doing anything
+	## without standing in the shed and watching.
+	# The map rebuilds at the end of a physics frame, and until it has done so once a
+	# query is an error rather than an empty answer
+	var map := get_world_3d().navigation_map
+	var post := SHED_ORIGIN + Vector3(0.9, 0, -1.4)
+	var waited := 0
+	while waited < 120:
+		await get_tree().physics_frame
+		waited += 1
+		if NavigationServer3D.map_get_iteration_id(map) != 0 				and NavigationServer3D.map_get_closest_point(map, post) != Vector3.ZERO:
+			break
+	print("   карта: регионов %d, активна %s, кадров ждали %d, ближайшая точка %v"
+		% [NavigationServer3D.map_get_regions(map).size(),
+			NavigationServer3D.map_is_active(map), waited,
+			NavigationServer3D.map_get_closest_point(map, post)])
+	var from := SHED_ORIGIN + Vector3(0.9, 0, -1.4)
+	for i in _bays.size():
+		var to: Vector3 = _bays[i]["at"] - Vector3(0, 0, RACK_FRONT_Z + 0.55)
+		var path := NavigationServer3D.map_get_path(map, from, to, true)
+		var length := 0.0
+		for c in range(1, path.size()):
+			length += path[c - 1].distance_to(path[c])
+		print("   путь к шкафу %d: %d точек, %.2f м (напрямую %.2f м)"
+			% [i, path.size(), length, from.distance_to(to)])
+
+
+func _watch_bays() -> void:
+	## --order prints what the shed's cabinets hold, before and after. A purchase that
+	## charges, queues, finishes and adds nothing to a MultiMesh looks exactly like a
+	## purchase that worked, right up until you walk over and look.
+	for i in _bays.size():
+		var bay: Dictionary = _bays[i]
+		print("   шкаф %d: серверов %d, в мешe %d, свободно %s" % [i,
+			bay["entry"]["servers"].size(), bay["servers"].multimesh.instance_count,
+			bay["free"]])
+
+
 func _check_laptop(player: ShowroomPlayer) -> void:
 	## --laptop: sit down and get up again through the real input path. Getting stuck
 	## at a screen is the worst bug a diegetic interface can have — the player cannot
@@ -976,6 +1044,53 @@ func _check_shop() -> void:
 		func(n, entry): return n + entry["servers"].size(), 0)
 	print("shop: серверов было %d, стало %d; стоек %d; очередь %d, сделано %d" % [
 		servers, after, _wiring.racks().size(), _estate.JobsQueued(), _estate.JobsDone()])
+
+
+func _navigation() -> void:
+	## Walkable floor, baked from what is actually standing in the shed. Workers used
+	## to go in a straight line and therefore through the desk, the pallets and each
+	## other's cabinets; a path around them is not a detail, it is the difference
+	## between a person and a marker sliding across the floor.
+	##
+	## Baked from the meshes rather than from collision shapes on purpose: almost
+	## nothing in the room has a collider, because nothing needed one until now, and
+	## giving every prop a body to please the baker is the wrong way round.
+	var navmesh := NavigationMesh.new()
+	navmesh.agent_radius = 0.34
+	navmesh.agent_height = 1.75
+	navmesh.agent_max_climb = 0.2
+	navmesh.cell_size = 0.08
+	navmesh.cell_height = 0.08
+	# Both, because the room is a mix: the props are meshes with no collider and the
+	# floor is a collider with no mesh.
+	navmesh.geometry_parsed_geometry_type = NavigationMesh.PARSED_GEOMETRY_BOTH
+	navmesh.geometry_source_geometry_mode = NavigationMesh.SOURCE_GEOMETRY_GROUPS_WITH_CHILDREN
+	navmesh.geometry_source_group_name = NAV_SOURCE
+	# Only the shed: the hall is on a raised floor the crew has no business on yet,
+	# and baking it as well is seconds of startup for nothing.
+	navmesh.filter_baking_aabb = AABB(SHED_ORIGIN + Vector3(-4.0, -0.4, -3.2),
+		Vector3(8.0, 3.2, 6.4))
+
+	# The map rasterises paths on its own grid, and a region registered against a
+	# different one gets its edges rounded away — the seams between polygons stop
+	# joining up. Set before the region exists, or it registers with the old grid.
+	var map := get_world_3d().navigation_map
+	NavigationServer3D.map_set_cell_size(map, navmesh.cell_size)
+	NavigationServer3D.map_set_cell_height(map, navmesh.cell_height)
+
+	var region := NavigationRegion3D.new()
+	region.navigation_mesh = navmesh
+	add_child(region)
+	var started := Time.get_ticks_msec()
+	# On this thread, not the default background one: the crew is created immediately
+	# after and would ask an empty map for its first path.
+	region.bake_navigation_mesh(false)
+	# Handing it back after the bake, because baking fills the resource and the region
+	# is what puts a mesh on the server: without this the map has a region and no
+	# surface, and every query answers the origin.
+	region.navigation_mesh = navmesh
+	print("навигация: %d полигонов за %d мс" % [
+		navmesh.get_polygon_count(), Time.get_ticks_msec() - started])
 
 
 func _shift() -> void:
@@ -1104,16 +1219,45 @@ func order(item: int, place: int, slot: int) -> int:
 	return job
 
 
-func job_site(job: int) -> Vector3:
-	## Where a worker stands to do it: in front of the cabinet, an arm's length off.
+func job_site(job: int, seat := 0) -> Vector3:
+	## Where a worker stands to do it. A cabinet takes two, one either side, which is
+	## also the only way the pair reads as moving it rather than as standing near it.
 	var place: int = _estate.JobPlaceOf(job)
+	var aside := Vector3(RACK_W * 0.5 + 0.3, 0, 0) * (1 if seat == 0 else -1)
 	if _estate.JobKindOf(job) == 1:
-		return _spots[place]["at"] + Vector3(0, 0, RACK_D * 0.5 + 0.55)
-	return _bays[place]["at"] + Vector3(0, 0, RACK_FRONT_Z + 0.55)
+		return _spots[place]["at"] + aside + Vector3(0, 0, RACK_D * 0.4)
+	# Behind the cabinet, where the sockets are: that is where the cords go in, and in
+	# the shed the front of a rack is a third of a metre from the back wall, which is
+	# not a place a person fits at all.
+	return _bays[place]["at"] - Vector3(0, 0, RACK_FRONT_Z + 0.55)
 
 
 func job_facing(job: int) -> Vector3:
 	return Vector3(0, 0, -1)
+
+
+func job_crew(job: int) -> int:
+	return 2 if _estate.JobKindOf(job) == 1 else 1
+
+
+func job_clip(job: int) -> String:
+	return "heave" if _estate.JobKindOf(job) == 1 else "patch"
+
+
+func job_prop(job: int) -> String:
+	## A cabinet is carried, and there is nothing to put in a hand for that. A server
+	## is patched, and a technician doing that has the cord in one hand — which is the
+	## difference between the two jobs at a glance.
+	return "" if _estate.JobKindOf(job) == 1 else "props/cable_coil"
+
+
+func job_started(job: int) -> void:
+	## A tag over the place being worked on. Ordering something and then watching the
+	## room for half a minute with no idea whether anything is happening is how a
+	## purchase that worked reads as a purchase that did nothing.
+	var at := job_site(job) + Vector3(0, 1.75, 0)
+	_tags[job] = _sign(self, at, "")
+	_tags[job].modulate = Color(0.40, 0.86, 0.58)
 
 
 func job_done(job: int) -> void:
@@ -1125,6 +1269,11 @@ func job_done(job: int) -> void:
 	else:
 		_rack_server(place, _estate.JobSlotOf(job))
 	_wiring.grew()
+	if _tags.has(job):
+		_tags[job].queue_free()
+		_tags.erase(job)
+	if "--order" in OS.get_cmdline_user_args():
+		_watch_bays()
 
 
 func _rack_server(place: int, slot: int) -> void:
@@ -1175,8 +1324,9 @@ func _drop_blank(bay: Dictionary, slot: int) -> void:
 func _floor_mark(parent: Node3D, at: Vector3) -> Node3D:
 	## A painted outline on the floor. Four thin quads rather than a textured plane:
 	## the palette atlas has no decals, and an outline is what a real floor gets.
+	const WIDE := 0.03
 	var mark := Node3D.new()
-	mark.position = at + Vector3(0, 0.004, 0)
+	mark.position = at + Vector3(0, 0.008, 0)
 	parent.add_child(mark)
 	var paint := StandardMaterial3D.new()
 	paint.albedo_color = Color(0.95, 0.72, 0.14)
@@ -1186,8 +1336,11 @@ func _floor_mark(parent: Node3D, at: Vector3) -> Node3D:
 		var bar := MeshInstance3D.new()
 		var plane := PlaneMesh.new()
 		var along := side < 2
-		plane.size = Vector2(half.x * 2.0 if along else 0.03,
-			0.03 if along else half.y * 2.0)
+		# The side bars stop short of the end ones rather than crossing them. Two
+		# coplanar quads sharing a corner is z-fighting by construction, and no amount
+		# of lifting the whole outline off the floor fixes it.
+		plane.size = (Vector2(half.x * 2.0, WIDE) if along
+			else Vector2(WIDE, half.y * 2.0 - WIDE * 2.0))
 		bar.mesh = plane
 		bar.material_override = paint
 		bar.position = Vector3(0 if along else half.x * (1 if side == 2 else -1), 0,
@@ -1200,7 +1353,7 @@ func _sign(parent: Node3D, at: Vector3, text: String) -> Label3D:
 	var label := Label3D.new()
 	label.text = text
 	label.fixed_size = true
-	label.font_size = 48
+	label.font_size = 34
 	label.pixel_size = 0.0004
 	label.modulate = Color(0.95, 0.72, 0.14)
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -1319,6 +1472,11 @@ func _process(_delta: float) -> void:
 	if text != _hud_label.text:
 		_hud_label.text = text
 
+	for job in _tags:
+		var kind: int = _estate.JobKindOf(job)
+		var what := ("ШКАФ" if kind == 1 else "СЕРВЕР %dU" % _estate.JobSlotOf(job))
+		_tags[job].text = "%s · %d%%" % [what, roundi(_estate.JobProgressOf(job) * 100.0)]
+
 
 func _build_stamp() -> String:
 	## When the running scene's script and models were last written. A scene left
@@ -1334,13 +1492,25 @@ func _build_stamp() -> String:
 
 
 func _unwired_hint() -> String:
+	## The shed is deliberately left unpatched — it is where you learn to do it by hand
+	## (docs/12, шаг 1) — so saying which cabinets are bare is not a warning, it is the
+	## job list. Without it a rack of cordless servers next to a shop that sells more
+	## of them reads as something broken.
 	var bare := PackedStringArray()
+	var shed := 0
 	for entry in _wiring.racks():
-		if int(entry["index"]) < SHED_RACK and _wiring.is_bare(entry):
+		if not _wiring.is_bare(entry):
+			continue
+		if int(entry["index"]) < SHED_RACK:
 			bare.append(str(entry["index"]))
-	if bare.is_empty():
-		return "всё разведено"
-	return "не разведены стойки %s — патчить с задней стороны" % ", ".join(bare)
+		else:
+			shed += 1
+	var hall := ("всё разведено" if bare.is_empty()
+		else "не разведены стойки %s — патчить с задней стороны" % ", ".join(bare))
+	if shed == 0:
+		return hall
+	return "%s; в сарае %d стойки без шнуров — это ваша работа, купленное бригада подключает сама" % [
+		hall, shed]
 
 
 # ------------------------------------------------------------------ helpers
@@ -1370,7 +1540,7 @@ func _place(parent: Node, path: String, at: Vector3, yaw: float) -> Node3D:
 	return node
 
 
-func _static_box(size: Vector3, at: Vector3) -> void:
+func _static_box(size: Vector3, at: Vector3) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	var shape := CollisionShape3D.new()
 	var box := BoxShape3D.new()
@@ -1379,6 +1549,7 @@ func _static_box(size: Vector3, at: Vector3) -> void:
 	body.add_child(shape)
 	body.position = at
 	add_child(body)
+	return body
 
 
 func _walk(node: Node) -> Array[Node]:

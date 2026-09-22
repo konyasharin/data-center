@@ -307,6 +307,63 @@ def build_clips(arm):
 	c.key(96, TYPE_BASE)
 	c.finish()
 
+	# Patching is not the same motion as "working at a rack": one hand holds the coil
+	# against the chest and the other takes a cord to the socket, pushes it home and
+	# comes back. The scene puts a real coil in that hand, so the pose has to keep it
+	# where a coil would be rather than wherever the arm happens to sit.
+	c = clip("patch", 108)
+	hold = anim.merge(ARMS_REST, {
+		"Spine": (4, 0, 0), "Spine1": (3, 0, 0), "Neck": (12, 0, 0), "Head": (6, 0, 0),
+		"LeftShoulder": (-8, 0, -10), "RightShoulder": (-6, 0, 8),
+		"LeftArm": (-52, 16, -22), "RightArm": (-58, -12, 18),
+		"LeftForeArm": (-78, 0, 30), "RightForeArm": (-70, 0, -26),
+		"LeftHand": (8, 0, -16), "RightHand": (14, 0, 12),
+	})
+	reach = anim.merge(hold, {
+		"RightShoulder": (-10, 0, 12), "RightArm": (-84, -18, 24),
+		"RightForeArm": (-26, 0, -12), "RightHand": (-6, 0, 16),
+		"Spine2": (3, 0, -5), "Neck": (14, 0, -6), "Head": (8, 0, -4),
+	})
+	seat = anim.merge(reach, {
+		"RightArm": (-88, -18, 26), "RightForeArm": (-18, 0, -10),
+		"RightHand": (-12, 0, 18), "Spine2": (5, 0, -6),
+	})
+	c.key(0, hold)
+	c.key(26, reach)
+	c.key(38, seat)
+	c.key(46, reach)
+	c.key(64, anim.merge(hold, {"LeftForeArm": (-72, 0, 28), "Head": (4, 0, 8)}))
+	c.key(108, hold)
+	c.finish()
+
+	# Two of these either side of a cabinet is what moving one looks like: feet planted
+	# wide, back braced, arms low and forward, the load rocking rather than the person.
+	c = clip("heave", 76)
+	brace = {
+		"Hips": (10, 0, 0),
+		"LeftUpLeg": (-34, 10, 0), "RightUpLeg": (-34, -10, 0),
+		"LeftLeg": (40, 0, 0), "RightLeg": (40, 0, 0),
+		"LeftFoot": (-12, 0, 0), "RightFoot": (-12, 0, 0),
+		"Spine": (16, 0, 0), "Spine1": (8, 0, 0), "Spine2": (4, 0, 0),
+		"Neck": (-6, 0, 0), "Head": (-4, 0, 0),
+		"LeftShoulder": (-10, 0, -12), "RightShoulder": (-10, 0, 12),
+		"LeftArm": (-74, 10, -18), "RightArm": (-74, -10, 18),
+		"LeftForeArm": (-22, 0, 14), "RightForeArm": (-22, 0, -14),
+		"LeftHand": (-8, 0, -10), "RightHand": (-8, 0, 10),
+	}
+	c.key(0, brace, root=lift(-0.03))
+	c.key(20, anim.merge(brace, {"Spine": (22, 0, -3), "Hips": (14, 0, -3),
+	                             "LeftForeArm": (-14, 0, 12), "RightForeArm": (-14, 0, -12)}),
+	      root=lift(-0.05))
+	c.key(40, anim.merge(brace, {"Spine": (12, 0, 3), "Hips": (7, 0, 3),
+	                             "Neck": (-9, 0, 0)}),
+	      root=lift(-0.02))
+	c.key(58, anim.merge(brace, {"Spine": (20, 0, -2), "LeftArm": (-70, 10, -16),
+	                             "RightArm": (-70, -10, 16)}),
+	      root=lift(-0.045))
+	c.key(76, brace, root=lift(-0.03))
+	c.finish()
+
 	c = clip("push_cart", 32)
 	push = {
 		"LeftShoulder": (-6, 0, -8), "RightShoulder": (-6, 0, 8),

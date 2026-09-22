@@ -56,6 +56,16 @@
 			"frames": 96,
 			"seconds": 4.0
 		},
+		"patch": {
+			"loop": true,
+			"frames": 108,
+			"seconds": 4.5
+		},
+		"heave": {
+			"loop": true,
+			"frames": 76,
+			"seconds": 3.167
+		},
 		"push_cart": {
 			"loop": true,
 			"frames": 32,

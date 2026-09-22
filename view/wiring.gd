@@ -45,6 +45,10 @@ const CABLE_R := 0.0025
 # the back of the connector: starting inside it, a cord that then turns sideways cuts
 # out through the boot's wall, which is the cable passing through the plug.
 const PLUG_OUT := 0.042
+# How far in front of a panel a cord may run sideways. A connector reaches 46 mm off
+# the face, so anything shorter than that plus the cord's own radius threads the run
+# through the plugs of every socket it passes.
+const CLEAR_OF_PLUGS := 0.090
 const SAG := 0.16            # of the span, how far a loose cord droops
 # must match tools/blender/dclib/units.py: the gaps between the duct's fingers
 const SPINE_PITCH := 0.09
@@ -338,11 +342,13 @@ func _auto_route(entry: Dictionary, from_port: int, to_port: int) -> PackedInt32
 	var inv: Transform3D = entry["xform"].affine_inverse()
 	var a := inv * _port_pos[from_port]
 	var b := inv * _port_pos[to_port]
-	# down the duct nearest the far end — a PDU strip sits beside one of them, and a
-	# switch in the middle is reached from whichever side the server already uses
-	var side := signf(b.x) if absf(b.x) > 0.05 else signf(a.x)
-	if side == 0.0:
-		side = 1.0
+	# Down the duct nearest the far end: a PDU strip stands beside one of them, which
+	# is what splits the two feeds left and right. A switch sits in the middle and
+	# belongs to neither, so its cords alternate by server — sending them all one way
+	# puts two thirds of the rack's cords in one duct, and that bundle is the one you
+	# cannot follow.
+	var side := signf(b.x) if absf(b.x) > 0.05 else (
+		1.0 if (_bridge.OwnerOf(from_port) & 1) == 0 else -1.0)
 
 	# A gap outside the span between the two ends would send the cord down past it and
 	# back up — a 180 degree turn, which is both wrong and what threw spikes off the
@@ -350,9 +356,18 @@ func _auto_route(entry: Dictionary, from_port: int, to_port: int) -> PackedInt32
 	var low := minf(a.y, b.y)
 	var high := maxf(a.y, b.y)
 	var enter := _nearest_clip(entry, inv, side, a.y, low, high)
-	var leave := _nearest_clip(entry, inv, side, b.y, low, high)
 	if enter < 0:
 		return PackedInt32Array()
+
+	# A switch or patch panel is a full 19" wide, so the duct stands on the same line
+	# as some of its sockets. Dressing the cord in level with the panel walks it
+	# through the plugs standing there; held only at the server end, it rises in front
+	# of the panel instead and reaches its socket past them.
+	var far_kind: int = _bridge.KindOf(_bridge.OwnerOf(to_port))
+	if far_kind == Kind.SWITCH or far_kind == Kind.PATCH:
+		return PackedInt32Array([enter])
+
+	var leave := _nearest_clip(entry, inv, side, b.y, low, high)
 	if leave < 0 or leave == enter:
 		return PackedInt32Array([enter])
 	return PackedInt32Array([enter, leave])
@@ -779,7 +794,36 @@ func _cable_mesh(slot: int) -> ArrayMesh:
 		_plug(mesh, from_port, colour, _seat_shift(from_port))
 		_plug(mesh, to_port, colour, _seat_shift(to_port))
 
+	if "--clash" in OS.get_cmdline_user_args():
+		_report_clashes(slot, links)
 	return mesh.commit()
+
+
+func _report_clashes(slot: int, links: PackedInt32Array) -> void:
+	## Every point of every cord against the body of every connector that is not its
+	## own. A cord through a neighbour's plug is the one fault that is obvious on
+	## screen and invisible in the numbers unless something looks for it.
+	var entry: Dictionary = _racks[slot]
+	var i := 0
+	while i < links.size():
+		var a: int = links[i]
+		var b: int = links[i + 1]
+		i += 2
+		if _port_rack[a] != slot:
+			continue
+		var pts := _cable_points(a, b, _routes.get(_bridge.LinkOf(a), PackedInt32Array()))
+		for point in pts:
+			for other in range(entry["port_from"], entry["port_to"]):
+				if other == a or other == b or _bridge.IsFree(other):
+					continue
+				var along := (point - _port_pos[other]).dot(_port_out[other])
+				if along < 0.002 or along > 0.050:
+					continue
+				var side := (point - _port_pos[other] - _port_out[other] * along).length()
+				if side < 0.009:
+					push_warning("cord %d->%d through plug %d at %v (along %.3f side %.3f)" % [
+						a, b, other, point, along, side])
+					break
 
 
 class _Buffer:
@@ -944,8 +988,11 @@ func _cable_points(from_port: int, to_port: int,
 	# plane without doubling back. It runs sideways in front of the connectors
 	# instead: level with them it goes straight through the plugs of every socket it
 	# passes, which is a row of cords skewered on their neighbours.
-	var clear_from: Vector3 = _port_pos[from_port] + normal * (PLUG_OUT + 0.022)
-	var plane_from := run if absf((run - from).dot(normal)) > 0.012 else clear_from
+	var clear_from: Vector3 = _port_pos[from_port] + normal * CLEAR_OF_PLUGS
+	# measured from the socket, not from the start of the cord: the cord already
+	# stands PLUG_OUT off the face, so comparing from there says the duct is far
+	# enough away when it is not, and the run ends up inside the row of plugs
+	var plane_from := run if absf((run - _port_pos[from_port]).dot(normal)) 		>= CLEAR_OF_PLUGS else clear_from
 	_step(points, from)
 	_step(points, from + _port_out[from_port] * _lead(from, plane_from, normal))
 	_step(points, _onto(from, plane_from, normal))
@@ -956,8 +1003,12 @@ func _cable_points(from_port: int, to_port: int,
 	for clip in clips:
 		_step(points, _clip_pos[clip] - _clip_out[clip] * lane)
 	_step(points, Vector3(leave.x, to.y, leave.z))
-	var clear_to: Vector3 = _port_pos[to_port] + normal * (PLUG_OUT + 0.022)
-	var plane_to := run if absf((run - to).dot(normal)) > 0.012 else clear_to
+	var clear_to: Vector3 = _port_pos[to_port] + normal * CLEAR_OF_PLUGS
+	var plane_to := run if absf((run - _port_pos[to_port]).dot(normal)) 		>= CLEAR_OF_PLUGS else clear_to
+	# Out of the gap to the clear plane first, and only then up to the socket's own
+	# height. Rising at the duct's own depth walks the cord through whatever plugs
+	# stand on that line — which a full-width switch always has.
+	_step(points, _onto(leave, plane_to, normal))
 	_step(points, _onto(Vector3(leave.x, to.y, leave.z), plane_to, normal))
 	_step(points, _onto(to, plane_to, normal))
 	_step(points, to + _port_out[to_port] * _lead(to, plane_to, normal))
@@ -971,7 +1022,10 @@ func _lead(from: Vector3, plane: Vector3, normal: Vector3) -> float:
 	## How far the cord may run straight out of its connector: at most half the way to
 	## the plane it then turns onto, so it never has to come back — but always enough
 	## to be clear of the connector before it starts bending.
-	return clampf(absf((plane - from).dot(normal)) * 0.5, 0.010, 0.045)
+	# The floor is generous because the path is smoothed afterwards, and smoothing
+	# cuts corners inward: too short a lead and the curve dips back into the row of
+	# connectors it was supposed to clear.
+	return clampf(absf((plane - from).dot(normal)) * 0.5, 0.026, 0.040)
 
 
 func _onto(point: Vector3, plane: Vector3, normal: Vector3) -> Vector3:
@@ -1007,9 +1061,13 @@ func _step(points: PackedVector3Array, at: Vector3) -> void:
 func _lane(port: int) -> float:
 	## How far *in* from the holder's mouth a cord sits — between the lips and the
 	## floor, so it is inside the recess rather than resting on the outside of it.
-	## Spread per cord, so a bundle is many cords and two that cross do not share a
-	## plane. Applied against the clip's outward normal, hence the sign at every use.
-	return 0.004 + (port % 5) * 0.0028
+	##
+	## Power takes the front of the gap and network the back, with a small spread
+	## inside each. Mixed together the bundle is one rope of three colours and there
+	## is no following a single cord through it; in two layers you can see which is
+	## which before you touch anything.
+	var network := _port_line[port] == Line.NETWORK
+	return (0.017 if network else 0.004) + (port % 3) * 0.0035
 
 
 

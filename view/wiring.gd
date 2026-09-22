@@ -72,6 +72,10 @@ const COLOUR := {
 	"clip_open": Color(0.85, 0.90, 1.00),
 }
 
+# connector shells, which are a plastic part and not a piece of the cord
+const PLUG_NETWORK := Color(0.62, 0.64, 0.60)
+const PLUG_POWER := Color(0.09, 0.09, 0.10)
+
 const STATUS_COLOUR := {
 	"dark": Color(0.35, 0.05, 0.05),
 	"offline": Color(0.55, 0.2, 0.75),
@@ -724,16 +728,20 @@ func _plug(st: SurfaceTool, port: int, colour: Color) -> void:
 	var body := 0.032
 	var network := _port_line[port] == Line.NETWORK
 
-	# body sunk into the socket, then the strain relief where the cord leaves it
+	# A connector is a moulded shell, not a length of the cable: tinting it from the
+	# cord makes it read as the cord swelling up at the end. Clear-ish grey for a
+	# network plug, near-black for a power one, as the real parts are.
+	var shell := PLUG_NETWORK if network else PLUG_POWER
 	_prism(st, _port_pos[port] + normal * (body * 0.5 - 0.004), basis,
 		Vector3(0.0055 if network else 0.0060, 0.0045 if network else 0.0050, body * 0.5),
-		colour.darkened(0.45))
-	_prism(st, _port_pos[port] + normal * (body + 0.003), basis,
-		Vector3(0.0035, 0.0035, 0.005), colour.darkened(0.25))
+		shell)
+	# the boot, which is the one part coloured like the cable
+	_prism(st, _port_pos[port] + normal * (body + 0.004), basis,
+		Vector3(0.0038, 0.0038, 0.007), colour.darkened(0.35))
 	if network:
-		# the latch tab, which is the thing that says "network" at a glance
+		# the latch tab, which is what says "network" at a glance
 		_prism(st, _port_pos[port] + normal * (body * 0.5) + basis.y * 0.0055, basis,
-			Vector3(0.0022, 0.0018, body * 0.34), colour.darkened(0.3))
+			Vector3(0.0022, 0.0018, body * 0.34), shell.lightened(0.10))
 
 
 func _prism(st: SurfaceTool, centre: Vector3, basis: Basis, half: Vector3,

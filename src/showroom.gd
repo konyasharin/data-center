@@ -607,9 +607,11 @@ func _populate(root: Node3D, index: int, entry: Dictionary) -> void:
 			Vector3(0, y + U * 0.5, -face_z))
 		if slot == 40:
 			patch_tf.append(turned)
-			# 24 in a row, 34 mm in from each edge of a 19" panel
+			# 24 in a row, 34 mm in from each edge of a 19" panel. Mirrored, because
+			# the panel is turned to face the aisle while these coordinates are in
+			# rack space: a layout that is not symmetric lands on the wrong side.
 			_wiring.add_panel(entry, Vector3(0, y + U * 0.5, -face_z - 0.001),
-				Wiring.Kind.PATCH, 24, -0.2073, 0.018026, 0.0)
+				Wiring.Kind.PATCH, 24, 0.2073, -0.018026, 0.0)
 		elif slot == 39 or slot == 36:
 			# 1U cable managers used to sit here. Their rings reach 16 mm out across
 			# the full 19", straight through the ducts' holders — and the duct does
@@ -617,9 +619,11 @@ func _populate(root: Node3D, index: int, entry: Dictionary) -> void:
 			blank_tf.append(centred)
 		elif slot == 38 or slot == 37:
 			switch_tf.append(turned)
-			# two rows of twelve on a 28 mm pitch, starting 60 mm in on the left
+			# Two rows of twelve on a 28 mm pitch, 60 mm in from the left edge — and
+			# so not centred: mirroring is what puts them over the sockets rather
+			# than 55 mm off them.
 			_wiring.add_panel(entry, Vector3(0, y + U * 0.5, -face_z - 0.001),
-				Wiring.Kind.SWITCH, 24, -0.1813, 0.028, 0.020)
+				Wiring.Kind.SWITCH, 24, 0.1813, -0.028, 0.020)
 		elif index % 3 == 2 and slot >= 6 and slot <= 9:
 			if slot == 6:
 				big_tf.append(here)

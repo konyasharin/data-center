@@ -757,8 +757,11 @@ func _prism(st: SurfaceTool, centre: Vector3, basis: Basis, half: Vector3,
 			half.x * (1.0 if (i & 1) else -1.0),
 			half.y * (1.0 if (i & 2) else -1.0),
 			half.z * (1.0 if (i & 4) else -1.0)))
-	for face in [[4, 6, 2, 0], [3, 7, 5, 1], [1, 5, 4, 0],
-			[6, 7, 3, 2], [2, 3, 1, 0], [5, 7, 6, 4]]:
+	# Wound the opposite way round to _solid's boxes. Godot takes clockwise as the
+	# front face, and a connector wound the other way is culled to its inside — which
+	# is exactly the "translucent, like the model is inside out" look.
+	for face in [[0, 2, 6, 4], [1, 5, 7, 3], [0, 4, 5, 1],
+			[2, 3, 7, 6], [0, 1, 3, 2], [4, 6, 7, 5]]:
 		_quad(st, corners[face[0]], corners[face[1]], corners[face[2]], corners[face[3]],
 			colour)
 
@@ -1130,6 +1133,8 @@ func _cable_material() -> StandardMaterial3D:
 	mat.vertex_color_use_as_albedo = true
 	mat.roughness = 0.75
 	mat.metallic = 0.0
+	if "--cullcheck" in OS.get_cmdline_user_args():
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	return mat
 
 

@@ -85,5 +85,29 @@ def main():
 		unplug[at] += v * 0.75
 	write("plug_out.wav", unplug)
 
+	# A cabinet panel set down on the one below it: a low body with a bit of ring, not
+	# a crash. It plays several times while one is assembled, so anything sharper gets
+	# tiring by the third piece.
+	thud = noise_burst(0.16, 4.0, 120, 900, 31)
+	ring = click(1180, 0.10, 6.0, 32)
+	part = thud[:]
+	for i, v in enumerate(ring):
+		at = int(RATE * 0.006) + i
+		while at >= len(part):
+			part.append(0.0)
+		part[at] += v * 0.35
+	# the frame flexing after the weight lands
+	for i in range(len(part)):
+		t = i / RATE
+		part[i] += 0.18 * math.sin(TAU * 64 * t) * math.exp(-9.0 * t)
+	write("rack_part.wav", part)
+
+	# The cabinet itself going down on the floor: heavier, longer, no ring at all.
+	floor = noise_burst(0.34, 3.0, 70, 520, 41)
+	for i in range(len(floor)):
+		t = i / RATE
+		floor[i] += 0.30 * math.sin(TAU * 41 * t) * math.exp(-5.0 * t)
+	write("rack_down.wav", floor)
+
 
 main()

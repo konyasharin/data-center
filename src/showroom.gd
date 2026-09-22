@@ -114,6 +114,12 @@ func _ready() -> void:
 			print("заказан шкаф -> работа %d" % job)
 			_watch_pair(job)
 
+	if "--crowd" in OS.get_cmdline_user_args():
+		_watch_crowd()
+
+	if "--crewshot" in OS.get_cmdline_user_args():
+		_shoot_crew()
+
 	if "--shop" in OS.get_cmdline_user_args():
 		_check_shop()
 		get_tree().quit()
@@ -915,11 +921,79 @@ func _catalogue() -> void:
 # ------------------------------------------------------------------- people
 
 func _watch_pair(job: int) -> void:
-	for i in 12:
+	var place: int = _estate.JobPlaceOf(job)
+	for i in 30:
 		await get_tree().create_timer(1.0).timeout
-		print("   %2d с: у шкафа %d чел., готово %d%%"
-			% [i + 1, _crew.at_job(job), roundi(_estate.JobProgressOf(job) * 100.0)])
+		var spot: Dictionary = _spots[place]
+		print("   %2d с: у места %d чел., готово %3d%%, собрано частей %d из %d"
+			% [i + 1, _crew.at_job(job), roundi(_estate.JobProgressOf(job) * 100.0),
+				int(spot.get("shown", 0)), (spot["stages"] as Array).size()
+					if spot.has("stages") else 0])
 		if _estate.JobStateOf(job) == 2:
+			break
+	get_tree().quit()
+
+
+func _shoot_crew() -> void:
+	## --crewshot: order one of each and photograph the crew actually doing it. A clip,
+	## a prop and a cord between two moving bones are three things that read fine in a
+	## log and wrong on screen, and there is no other way to see them.
+	var camera := Camera3D.new()
+	camera.fov = 55
+	add_child(camera)
+
+	for kind in [0, 1]:
+		var spots := free_spots(kind)
+		if spots.is_empty():
+			continue
+		var job := order(kind, spots[0]["place"], spots[0]["slot"])
+		while _crew.at_job(job) == 0:
+			await get_tree().create_timer(0.2).timeout
+		await get_tree().create_timer(2.2).timeout
+
+		var at := job_site(job)
+		var ahead := job_facing(job).normalized()
+		var beside := Vector3(ahead.z, 0, -ahead.x)
+		# From the side at chest height: the hands and whatever is in them are between
+		# the worker and the cabinet, and from behind the body hides both.
+		var look := at + ahead * 0.35 + Vector3(0, 1.05, 0)
+		var eye := at + beside * 1.9 + ahead * 0.4 + Vector3(0, 1.55, 0)
+		camera.global_position = eye
+		camera.look_at(look, Vector3.UP)
+		camera.make_current()
+		for i in 8:
+			await RenderingServer.frame_post_draw
+		var dir := "user://shots"
+		DirAccess.make_dir_recursive_absolute(dir)
+		print("камера %v, место %v" % [eye, at])
+		print(_crew.cord_report())
+		var name := "crew_patch" if kind == 0 else "crew_rack"
+		get_viewport().get_texture().get_image().save_png("%s/%s.png" % [dir, name])
+		print("shot: ", ProjectSettings.globalize_path(dir), "/", name, ".png")
+		# let it finish before ordering the next one, or the second photograph has the
+		# first job's technician standing in front of the lens
+		while _estate.JobStateOf(job) != 2:
+			await get_tree().create_timer(0.5).timeout
+	get_tree().quit()
+
+
+func _watch_crowd() -> void:
+	## Two servers into the same cabinet. There is one place to stand behind a rack, so
+	## the second job has to wait for the first rather than put two people in it.
+	var spots := free_spots(0)
+	if spots.size() < 2 or spots[0]["place"] != spots[1]["place"]:
+		print("crowd: в одном шкафу нет двух свободных мест")
+		get_tree().quit()
+		return
+	for i in 2:
+		print("заказан сервер -> работа %d"
+			% order(0, spots[i]["place"], spots[i]["slot"]))
+	for i in 34:
+		await get_tree().create_timer(1.0).timeout
+		print("   %2d с: у шкафа %d чел., в работе %d, в очереди %d, сделано %d"
+			% [i + 1, _crew.at_job(0) + _crew.at_job(1), _estate.JobsRunning(),
+				_estate.JobsQueued(), _estate.JobsDone()])
+		if _estate.JobsDone() == 2:
 			break
 	get_tree().quit()
 
@@ -1098,7 +1172,7 @@ func _shift() -> void:
 	## They wait by the shed door and go wherever the queue sends them.
 	_crew = Crew.new()
 	add_child(_crew)
-	_crew.setup(_estate, self, [
+	_crew.setup(_estate, self, _wiring, [
 		SHED_ORIGIN + Vector3(0.9, 0, -1.4),
 		SHED_ORIGIN + Vector3(1.7, 0, -1.4),
 	])
@@ -1220,20 +1294,34 @@ func order(item: int, place: int, slot: int) -> int:
 
 
 func job_site(job: int, seat := 0) -> Vector3:
-	## Where a worker stands to do it. A cabinet takes two, one either side, which is
-	## also the only way the pair reads as moving it rather than as standing near it.
+	## Where a worker stands to do it. A cabinet is built from its two front corners,
+	## crouched, on the side the aisle is: that is the only place there is room, and a
+	## pair kneeling at opposite corners is what assembling one looks like.
 	var place: int = _estate.JobPlaceOf(job)
-	var aside := Vector3(RACK_W * 0.5 + 0.3, 0, 0) * (1 if seat == 0 else -1)
 	if _estate.JobKindOf(job) == 1:
-		return _spots[place]["at"] + aside + Vector3(0, 0, RACK_D * 0.4)
+		var hand := 1.0 if seat == 0 else -1.0
+		return _spots[place]["at"] + Vector3(hand * (RACK_W * 0.5 + 0.12), 0,
+			-(RACK_D * 0.5 + 0.35))
 	# Behind the cabinet, where the sockets are: that is where the cords go in, and in
 	# the shed the front of a rack is a third of a metre from the back wall, which is
 	# not a place a person fits at all.
 	return _bays[place]["at"] - Vector3(0, 0, RACK_FRONT_Z + 0.55)
 
 
-func job_facing(job: int) -> Vector3:
-	return Vector3(0, 0, -1)
+func job_facing(job: int, seat := 0) -> Vector3:
+	## At the work, not a fixed direction. The two kinds are approached from opposite
+	## sides of a cabinet, so one constant has to be wrong for one of them — and it
+	## was: patching happens behind the rack and the technician faced the aisle.
+	var place: int = _estate.JobPlaceOf(job)
+	var at: Vector3 = (_spots[place]["at"] if _estate.JobKindOf(job) == 1
+		else _bays[place]["at"])
+	return at - job_site(job, seat)
+
+
+func job_place(job: int) -> int:
+	## Which cabinet or floor spot this is, as one number. Two jobs sharing it cannot
+	## be worked at the same time, because there is one place to stand.
+	return _estate.JobKindOf(job) * 1000 + _estate.JobPlaceOf(job)
 
 
 func job_crew(job: int) -> int:
@@ -1241,20 +1329,37 @@ func job_crew(job: int) -> int:
 
 
 func job_clip(job: int) -> String:
-	return "heave" if _estate.JobKindOf(job) == 1 else "patch"
+	return "work_crouch" if _estate.JobKindOf(job) == 1 else "patch"
 
 
 func job_prop(job: int) -> String:
-	## A cabinet is carried, and there is nothing to put in a hand for that. A server
-	## is patched, and a technician doing that has the cord in one hand — which is the
-	## difference between the two jobs at a glance.
+	## A cabinet is assembled with both hands. A server is patched, and a technician
+	## doing that works out of a coil held in one hand — which is the difference
+	## between the two jobs at a glance.
 	return "" if _estate.JobKindOf(job) == 1 else "props/cable_coil"
+
+
+func job_sound(job: int) -> String:
+	return "" if _estate.JobKindOf(job) == 1 else "plug_in"
+
+
+func job_beat(job: int) -> float:
+	## One per cycle of the clip, which for patching is one cord going in. A cabinet
+	## makes its noise when a part appears instead, so it has no beat.
+	return 0.0 if _estate.JobKindOf(job) == 1 else 4.5
+
+
+func job_tick(job: int, _before: float, after: float) -> void:
+	if _estate.JobKindOf(job) == 1:
+		_show_rack(_estate.JobPlaceOf(job), after)
 
 
 func job_started(job: int) -> void:
 	## A tag over the place being worked on. Ordering something and then watching the
 	## room for half a minute with no idea whether anything is happening is how a
 	## purchase that worked reads as a purchase that did nothing.
+	if _estate.JobKindOf(job) == 1:
+		_start_rack(_estate.JobPlaceOf(job))
 	var at := job_site(job) + Vector3(0, 1.75, 0)
 	_tags[job] = _sign(self, at, "")
 	_tags[job].modulate = Color(0.40, 0.86, 0.58)
@@ -1290,22 +1395,68 @@ func _rack_server(place: int, slot: int) -> void:
 	_wiring.wire_server(bay["entry"], device)
 
 
-func _raise_rack(place: int) -> void:
+func _start_rack(place: int) -> void:
+	## A cabinet is not carried in whole — it is built where it stands, and the parts
+	## appear in the order someone would put them there. Everything is made at once and
+	## hidden, because building it a stage at a time would have the wiring register its
+	## ports halfway through, and nothing else in the scene expects that.
 	var spot: Dictionary = _spots[place]
+	if spot.has("stages"):
+		return
 	var root := Node3D.new()
 	root.position = spot["at"]
 	add_child(root)
-	root.add_child(Assets.instance("hardware/rack_42u_frame"))
-	var front := Assets.instance("hardware/rack_42u_door_front")
-	front.position = Vector3(-RACK_W / 2, 0.01, RACK_FRONT_Z + 0.004)
-	root.add_child(front)
+	var stages: Array = []
+
+	var frame := Assets.instance("hardware/rack_42u_frame")
+	root.add_child(frame)
+	stages.append([frame])
 
 	var entry: Dictionary = _wiring.rack(SHED_RACK + 10 + place,
 		Transform3D(Basis(), spot["at"]))
+	var mark := root.get_child_count()
 	_fittings(root, entry, 1)
+	stages.append(root.get_children().slice(mark))
+
+	mark = root.get_child_count()
 	# A cabinet arrives empty. What goes in it is the next thing bought, which is the
 	# whole point of it standing there.
-	_open_bay(_populate(root, 0, entry, 0), spot["at"])
+	var bay: Dictionary = _populate(root, 0, entry, 0)
+	stages.append(root.get_children().slice(mark))
+
+	var front := Assets.instance("hardware/rack_42u_door_front")
+	front.position = Vector3(-RACK_W / 2, 0.01, RACK_FRONT_Z + 0.004)
+	root.add_child(front)
+	stages.append([front])
+
+	for group in stages:
+		for node in group:
+			node.visible = false
+	spot["stages"] = stages
+	spot["shown"] = 0
+	spot["bay"] = bay
+	_wiring.grew()
+
+
+func _show_rack(place: int, progress: float) -> void:
+	var spot: Dictionary = _spots[place]
+	if not spot.has("stages"):
+		return
+	var stages: Array = spot["stages"]
+	var want := clampi(floori(progress * stages.size()) + 1, 0, stages.size())
+	while int(spot["shown"]) < want:
+		for node in stages[int(spot["shown"])]:
+			node.visible = true
+		spot["shown"] = int(spot["shown"]) + 1
+		_crew.say(spot["at"] + Vector3(0, 0.4, 0),
+			"rack_down" if int(spot["shown"]) == stages.size() else "rack_part", -4.0)
+
+
+func _raise_rack(place: int) -> void:
+	var spot: Dictionary = _spots[place]
+	_start_rack(place)
+	_show_rack(place, 1.0)
+	_open_bay(spot["bay"], spot["at"])
 	if is_instance_valid(spot["mark"]):
 		spot["mark"].queue_free()
 	if is_instance_valid(spot["sign"]):

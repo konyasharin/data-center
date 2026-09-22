@@ -1260,6 +1260,21 @@ func _aim(origin: Vector3, forward: Vector3, target: Vector3) -> float:
 
 # ------------------------------------------------------------------ geometry
 
+func loose_cord(from: Vector3, from_out: Vector3, to: Vector3, to_out: Vector3,
+		colour: Color) -> ArrayMesh:
+	## A cord that is not plugged in at either end — a lead in someone's hands. Same
+	## tube, same droop and the same material as a patched one, because it is the same
+	## object; a second cable built somewhere else would drift from this one the first
+	## time either is touched.
+	var mesh := _Buffer.new()
+	_tube(mesh, _droop(from, from_out, to, to_out), colour)
+	return mesh.commit()
+
+
+func cord_material() -> StandardMaterial3D:
+	return _cable_material()
+
+
 func _cable_mesh(slot: int) -> ArrayMesh:
 	## Rebuilt only when the patching changes (docs/10: cables are procedural geometry,
 	## not a node per cord), and only for the rack that changed.

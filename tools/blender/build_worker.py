@@ -312,12 +312,15 @@ def build_clips(arm):
 	# comes back. The scene puts a real coil in that hand, so the pose has to keep it
 	# where a coil would be rather than wherever the arm happens to sit.
 	c = clip("patch", 108)
+	# The two hands have to be a forearm apart, or the cord the scene draws between
+	# them is a 60 mm stub hidden inside the fingers: the coil hangs low and out to the
+	# left, the other hand works in front of the chest.
 	hold = anim.merge(ARMS_REST, {
 		"Spine": (4, 0, 0), "Spine1": (3, 0, 0), "Neck": (12, 0, 0), "Head": (6, 0, 0),
-		"LeftShoulder": (-8, 0, -10), "RightShoulder": (-6, 0, 8),
-		"LeftArm": (-52, 16, -22), "RightArm": (-58, -12, 18),
-		"LeftForeArm": (-78, 0, 30), "RightForeArm": (-70, 0, -26),
-		"LeftHand": (8, 0, -16), "RightHand": (14, 0, 12),
+		"LeftShoulder": (-2, 0, -14), "RightShoulder": (-6, 0, 8),
+		"LeftArm": (-16, 20, -34), "RightArm": (-58, -12, 18),
+		"LeftForeArm": (-30, 0, 18), "RightForeArm": (-70, 0, -26),
+		"LeftHand": (2, 0, -22), "RightHand": (14, 0, 12),
 	})
 	reach = anim.merge(hold, {
 		"RightShoulder": (-10, 0, 12), "RightArm": (-84, -18, 24),
@@ -332,7 +335,7 @@ def build_clips(arm):
 	c.key(26, reach)
 	c.key(38, seat)
 	c.key(46, reach)
-	c.key(64, anim.merge(hold, {"LeftForeArm": (-72, 0, 28), "Head": (4, 0, 8)}))
+	c.key(64, anim.merge(hold, {"LeftForeArm": (-24, 0, 16), "Head": (4, 0, 8)}))
 	c.key(108, hold)
 	c.finish()
 

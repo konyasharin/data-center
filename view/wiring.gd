@@ -357,13 +357,12 @@ func _auto_route(entry: Dictionary, from_port: int, to_port: int) -> PackedInt32
 	var inv: Transform3D = entry["xform"].affine_inverse()
 	var a := inv * _port_pos[from_port]
 	var b := inv * _port_pos[to_port]
-	# Down the duct nearest the far end: a PDU strip stands beside one of them, which
-	# is what splits the two feeds left and right. A switch sits in the middle and
-	# belongs to neither, so its cords alternate by server — sending them all one way
-	# puts two thirds of the rack's cords in one duct, and that bundle is the one you
-	# cannot follow.
-	var side := signf(b.x) if absf(b.x) > 0.05 else (
-		1.0 if (_bridge.OwnerOf(from_port) & 1) == 0 else -1.0)
+	# One duct per thing. A PDU strip stands beside one of them, so feed A goes left
+	# and feed B right on its own. A switch spans both, and splitting its cords by
+	# which half of the panel they land on fills each duct with two colours: the run
+	# is barely shorter and the bundle is twice as hard to read. They all take the
+	# same duct as feed B, so the left one carries feed A and nothing else.
+	var side := signf(b.x) if _port_line[from_port] == Line.POWER else 1.0
 
 	# A gap outside the span between the two ends would send the cord down past it and
 	# back up — a 180 degree turn, which is both wrong and what threw spikes off the
@@ -1093,8 +1092,11 @@ func _lane(port: int) -> float:
 	## inside each. Mixed together the bundle is one rope of three colours and there
 	## is no following a single cord through it; in two layers you can see which is
 	## which before you touch anything.
+	# The recess itself runs from 4 to 16 mm in from the mouth — the floor of the
+	# holder is at 24 mm and its lips at 41. Network sat at 17 to 24 and so lay behind
+	# the floor, through the body of the holder instead of in it.
 	var network := _port_line[port] == Line.NETWORK
-	return (0.017 if network else 0.004) + (port % 3) * 0.0035
+	return (0.0105 if network else 0.0045) + (port % 3) * 0.0018
 
 
 

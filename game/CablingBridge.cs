@@ -24,9 +24,13 @@ public partial class CablingBridge : RefCounted
 
 	public int LastLink { get; private set; } = -1;
 
-	public int AddDevice(int kind, int rack, int powerPorts, int networkPorts, int feed)
+	// GDScript does not see a C# default, so every caller passes `rows` — one row for
+	// anything whose sockets are a single line.
+	public int AddDevice(int kind, int rack, int powerPorts, int networkPorts, int feed,
+		int rows)
 	{
-		return _state.AddDevice((DeviceKind)kind, rack, powerPorts, networkPorts, (Feed)feed);
+		return _state.AddDevice((DeviceKind)kind, rack, powerPorts, networkPorts,
+			(Feed)feed, rows);
 	}
 
 	public int DeviceCount() => _state.DeviceCount;

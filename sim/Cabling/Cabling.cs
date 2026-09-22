@@ -68,6 +68,7 @@ public sealed class CablingState
 	private Feed[] _feed = Array.Empty<Feed>();
 	private int[] _portStart = Array.Empty<int>();
 	private int[] _portCount = Array.Empty<int>();
+	private int[] _portRows = Array.Empty<int>();
 	private int _deviceCount;
 
 	// ports, flattened across devices
@@ -90,8 +91,12 @@ public sealed class CablingState
 	/// array writes garbage.</summary>
 	public int PortTotal => _portCursor;
 
+	/// <param name="rows">How many rows the ports are laid out in. A switch's
+	/// twenty-four sockets are two rows of twelve, and which port sits above which is
+	/// not something a caller can work out from the count — it is a fact about the
+	/// hardware, and patching reads as tidy or not depending on it.</param>
 	public int AddDevice(DeviceKind kind, int rack, int powerPorts, int networkPorts,
-		Feed feed = Feed.None)
+		Feed feed = Feed.None, int rows = 1)
 	{
 		ArgumentOutOfRangeException.ThrowIfNegative(powerPorts);
 		ArgumentOutOfRangeException.ThrowIfNegative(networkPorts);
@@ -102,12 +107,14 @@ public sealed class CablingState
 		Grow(ref _feed, _deviceCount);
 		Grow(ref _portStart, _deviceCount);
 		Grow(ref _portCount, _deviceCount);
+		Grow(ref _portRows, _deviceCount);
 
 		_kind[id] = kind;
 		_rack[id] = rack;
 		_feed[id] = feed;
 		_portStart[id] = _portCursor;
 		_portCount[id] = powerPorts + networkPorts;
+		_portRows[id] = rows < 1 ? 1 : rows;
 
 		int total = _portCursor + powerPorts + networkPorts;
 		Grow(ref _portLine, total);
@@ -131,6 +138,7 @@ public sealed class CablingState
 	public int RackOf(int device) => _rack[Device(device)];
 	public Feed FeedOf(int device) => _feed[Device(device)];
 	public int PortCountOf(int device) => _portCount[Device(device)];
+	public int RowsOf(int device) => _portRows[Device(device)];
 	public LineKind LineOf(int port) => _portLine[Port(port)];
 	public int OwnerOf(int port) => _portOwner[Port(port)];
 	public bool IsFree(int port) => _portLink[Port(port)] == NoLink;

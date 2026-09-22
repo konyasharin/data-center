@@ -177,7 +177,6 @@ func rack(index: int, xform: Transform3D) -> Dictionary:
 		"clip_from": _clip_pos.size(),
 		"clip_to": _clip_pos.size(),
 		"rings": PackedVector3Array(),
-		"net_side": 1.0,      # the duct network shares, which is feed B's
 		"slot": _racks.size(),
 	}
 	_racks.append(entry)
@@ -187,7 +186,7 @@ func rack(index: int, xform: Transform3D) -> Dictionary:
 func add_server(entry: Dictionary, at: Vector3, height: float, depth: float) -> int:
 	## `at` is the chassis origin in rack space; the body runs from there toward -Z,
 	## so every socket is on the plane just behind its back face.
-	var device: int = _bridge.AddDevice(Kind.SERVER, entry["index"], 2, 1, FeedId.NONE)
+	var device: int = _bridge.AddDevice(Kind.SERVER, entry["index"], 2, 1, FeedId.NONE, 1)
 	# The chassis rear itself, which is where the sockets stand: they are built out of
 	# that face, not into it.
 	var z := -depth
@@ -207,7 +206,7 @@ func add_server(entry: Dictionary, at: Vector3, height: float, depth: float) -> 
 func add_strip(entry: Dictionary, at: Vector3, feed: int, outlets := OUTLETS) -> int:
 	## A 0U strip down the back channel. Outlets face the aisle, which is where the
 	## person doing the patching is standing.
-	var device: int = _bridge.AddDevice(Kind.PDU, entry["index"], outlets, 0, feed)
+	var device: int = _bridge.AddDevice(Kind.PDU, entry["index"], outlets, 0, feed, 1)
 	for i in outlets:
 		var up := OUTLET_BASE + i * OUTLET_SPAN / float(maxi(outlets - 1, 1))
 		_port(entry, device, at + Vector3(0.0, up, -0.023))
@@ -215,10 +214,6 @@ func add_strip(entry: Dictionary, at: Vector3, feed: int, outlets := OUTLETS) ->
 		entry["feed_a"].append(device)
 	else:
 		entry["feed_b"].append(device)
-		# network follows feed B, so it has to know which side that landed on — the
-		# two rows face opposite ways and the feeds are keyed to the hall, not the
-		# cabinet
-		entry["net_side"] = signf(at.x) if not is_zero_approx(at.x) else 1.0
 	return device
 
 
@@ -227,8 +222,10 @@ func add_panel(entry: Dictionary, centre: Vector3, kind: int, ports: int,
 	## Sockets are placed where the model actually draws them, not spread evenly across
 	## the panel: a switch's two rows of twelve start 60 mm in from the left edge and
 	## are not centred (tools/blender/build_props.py). Guessing put markers 38 mm out.
-	var device: int = _bridge.AddDevice(kind, entry["index"], 0, ports, FeedId.NONE)
 	var rows := 2 if row_gap > 0.0 else 1
+	# the core hands out uplink sockets column by column, which it can only do if it
+	# knows the panel is two rows and not twenty-four in a line
+	var device: int = _bridge.AddDevice(kind, entry["index"], 0, ports, FeedId.NONE, rows)
 	var per_row := ports / rows
 	for i in ports:
 		var row := i / per_row
@@ -378,58 +375,73 @@ func wire_rack(entry: Dictionary, mistake_in := 0, seed_value := 1, quiet := fal
 func _auto_route(entry: Dictionary, from_port: int, to_port: int) -> PackedInt32Array:
 	if to_port < 0:
 		return PackedInt32Array()
+	# Power is not dressed at all. The outlet is level with the server and a hand's
+	# width away, so the cord is one short hop across; walking it into a duct and out
+	# again makes it longer, adds four corners and buries it behind the network.
+	if _port_line[from_port] == Line.POWER:
+		return PackedInt32Array()
+
 	var inv: Transform3D = entry["xform"].affine_inverse()
 	var a := inv * _port_pos[from_port]
 	var b := inv * _port_pos[to_port]
-	# One duct per thing. A PDU strip stands beside one of them, so feed A goes left
-	# and feed B right on its own. A switch spans both, and splitting its cords by
-	# which half of the panel they land on fills each duct with two colours: the run
-	# is barely shorter and the bundle is twice as hard to read. They all take the
-	# same duct as feed B, so the left one carries feed A and nothing else.
-	var side: float = entry["net_side"]
-	if _port_line[from_port] == Line.POWER:
-		side = signf(b.x)
+	# The duct on the same side as the socket being reached. The core hands the lower
+	# half of the rack one end of the switch and the upper half the other, so this
+	# splits the network evenly between the two channels and no cord crosses the
+	# panel to find its socket.
+	var side := signf(b.x)
 
 	# A gap outside the span between the two ends would send the cord down past it and
 	# back up — a 180 degree turn, which is both wrong and what threw spikes off the
 	# tube. Short hops stay undressed instead, which is what happens in a real rack.
 	var low := minf(a.y, b.y)
 	var high := maxf(a.y, b.y)
-	var enter := _nearest_clip(entry, inv, side, a.y, low, high)
+
+	# One holder per cord, stepping up from the one nearest the first server of this
+	# half of the rack. Holders sit 90 mm apart and servers 44, so putting every cord
+	# in the holder nearest its own socket packs two into some gaps and leaves others
+	# empty; taking them in turn fans the bundle out evenly.
+	var servers: PackedInt32Array = entry["servers"]
+	var nth := servers.find(_bridge.OwnerOf(from_port))
+	var base := 0 if nth < servers.size() / 2 else servers.size() / 2
+	var first := _network_port(servers[base]) if nth >= 0 else -1
+	# the first server of the half sits below this cord's own span, so it is the one
+	# the search has to be allowed to reach down to
+	var first_y := (inv * _port_pos[first]).y if first >= 0 else a.y
+	var enter := _nearest_clip(entry, inv, side, first_y, minf(first_y, low), high)
 	if enter < 0:
 		return PackedInt32Array()
+	if nth >= 0:
+		var up: int = _clip_key(entry, enter) % SPINE_CLIPS
+		enter += mini(up + nth - base, SPINE_CLIPS - 1) - up
 
-	# A switch or patch panel is a full 19" wide, so the duct stands on the same line
-	# as some of its sockets: dressed in level with the panel, a cord walks through
-	# the plugs standing there. It runs the duct as far as the horizontal manager
-	# under the panel and leaves it there — held the whole way up, but clear of the
-	# sockets. With no manager it is held at the server end only.
+	# Two holders, not every one in between: both sit on the same vertical line, so
+	# the cord runs the duct either way, and a cord that claims eighteen holders fills
+	# them for everything behind it.
+	#
+	# It leaves at the last holder under the panel rather than level with it. A switch
+	# is a full 19" wide and stands on the same line as the duct, so a cord dressed in
+	# level with it walks through the plugs of every socket it passes.
 	var far_kind: int = _bridge.KindOf(_bridge.OwnerOf(to_port))
+	var leave_at := b.y
 	if far_kind == Kind.SWITCH or far_kind == Kind.PATCH:
 		var rings: PackedVector3Array = entry["rings"]
-		if rings.is_empty():
-			return PackedInt32Array([enter])
-		var top := _nearest_clip(entry, inv, side, (inv * rings[0]).y, low, high)
-		if top < 0 or top == enter:
-			return PackedInt32Array([enter])
-		return _clip_span(entry, enter, top)
-
-	var leave := _nearest_clip(entry, inv, side, b.y, low, high)
+		leave_at = (inv * rings[0]).y if not rings.is_empty() else b.y
+	var leave := _nearest_clip(entry, inv, side, leave_at, low, high)
 	if leave < 0 or leave == enter:
 		return PackedInt32Array([enter])
 	return PackedInt32Array([enter, leave])
 
 
-func _clip_span(entry: Dictionary, from_clip: int, to_clip: int) -> PackedInt32Array:
-	## Every gap between the two, so a cord that runs a long way up the duct is held
-	## along its whole length instead of passing the holders by.
-	var span := PackedInt32Array()
-	var step := 1 if to_clip >= from_clip else -1
-	var clip := from_clip
-	while clip != to_clip + step:
-		span.append(clip)
-		clip += step
-	return span
+func _flat(v: Vector3) -> Vector3:
+	return Vector3(v.x, 0.0, v.z)
+
+
+func _network_port(device: int) -> int:
+	for i in _bridge.PortCountOf(device):
+		var port: int = _bridge.PortOf(device, i)
+		if _port_line[port] == Line.NETWORK:
+			return port
+	return -1
 
 
 func _nearest_clip(entry: Dictionary, inv: Transform3D, side: float, height: float,
@@ -1555,8 +1567,11 @@ func _chamfer(points: PackedVector3Array, radius: float) -> PackedVector3Array:
 func _droop(from: Vector3, from_out: Vector3, to: Vector3,
 		to_out: Vector3) -> PackedVector3Array:
 	var span := from.distance_to(to)
-	var lift := from + from_out * minf(0.06, span * 0.3)
-	var land := to + to_out * minf(0.06, span * 0.3)
+	# Straight out of both connectors before the arc starts. A shorter lead lets the
+	# curve begin while the cord is still level with the neighbouring sockets, and it
+	# grazes the plugs standing in them.
+	var lift := from + from_out * minf(0.09, span * 0.45)
+	var land := to + to_out * minf(0.09, span * 0.45)
 	var sag := Vector3.DOWN * (span * SAG)
 
 	var points := PackedVector3Array()
@@ -1604,7 +1619,11 @@ func _tube(mesh: _Buffer, points: PackedVector3Array, colour: Color) -> void:
 				push_warning("cable point %d is not finite: %v" % [i, p])
 			elif p.length() > 60.0:
 				push_warning("cable point %d is far away: %v" % [i, p])
-			elif i > 0 and points[i - 1].distance_to(p) > 0.35:
+			elif i > 0 and (_flat(p - points[i - 1]).length() > 0.35
+					or points[i - 1].distance_to(p) > 1.8):
+				# A long leg is only wrong sideways. The run up a duct is deliberately
+				# one straight segment between the two holders a cord is dressed into,
+				# and that is a metre and a half in a full rack.
 				push_warning("cable leg %.2f m from %v to %v" % [
 					points[i - 1].distance_to(p), points[i - 1], p])
 		for i in range(1, points.size() - 1):

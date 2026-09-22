@@ -49,20 +49,16 @@ public static class RackWiring
 				mistakes++;
 			}
 
-			// alternate which feed is taken first, so a half-wired rack is still
-			// balanced across the two supplies
-			ReadOnlySpan<int> first = (i & 1) == 0 ? feedA : feedB;
-			ReadOnlySpan<int> second = (i & 1) == 0 ? feedB : feedA;
+			// The left inlet always takes feed A and the right one feed B. Alternating
+			// them per server is just as redundant and reads as a mistake: the two
+			// cords leaving a server cross, and the pair of ducts fills with cords
+			// arriving from opposite inlets.
+			ReadOnlySpan<int> first = feedA;
+			ReadOnlySpan<int> second = feedB;
 			if (slipKind == 1)
 			{
 				second = first;   // both inlets on one feed: works until that feed drops
 			}
-
-			// Where this server sits in the rack, as a fraction. Outlets and uplinks are
-			// handed out from the matching point in their own row rather than from the
-			// first free one, so a cord reaches the socket level with it instead of
-			// crossing half the cabinet to the next one in order.
-			float at = servers.Length > 1 ? i / (float)(servers.Length - 1) : 0f;
 
 			int madeHere = 0;
 			int inlets = slipKind == 0 ? 1 : 2;
@@ -70,7 +66,7 @@ public static class RackWiring
 			{
 				ReadOnlySpan<int> target = inlet == 0 ? first : second;
 				int serverPort = state.FindFreePort(server, LineKind.Power);
-				int pduPort = FreePortIn(state, target, LineKind.Power, at);
+				int pduPort = FreePortIn(state, target, LineKind.Power, i);
 				if (serverPort < 0 || pduPort < 0)
 				{
 					shortOfPorts++;
@@ -89,8 +85,15 @@ public static class RackWiring
 
 			if (slipKind != 2)
 			{
+				// The rack is split down the middle: the lower servers climb one duct
+				// and take the switch from one end, the upper ones climb the other and
+				// take it from the other end. One duct carrying every network cord is
+				// a stuffed bundle beside an empty channel, and half of those cords
+				// then cross the whole panel to reach their socket.
+				bool lower = i < servers.Length / 2;
 				int serverPort = state.FindFreePort(server, LineKind.Network);
-				int switchPort = FreePortIn(state, uplinks, LineKind.Network, at);
+				int switchPort = UplinkPort(state, uplinks,
+					lower ? i : i - servers.Length / 2, lower);
 				if (serverPort < 0 || switchPort < 0)
 				{
 					shortOfPorts++;
@@ -117,12 +120,13 @@ public static class RackWiring
 		return new WiringReport(wired, power, network, mistakes, shortOfPorts, refused);
 	}
 
-	/// <param name="at">Where to start looking, as a fraction of the device's ports.
-	/// Both sides are ordered the same way — servers up the rack, outlets up the strip
-	/// — so starting level with the server keeps the cords short and parallel instead
-	/// of letting them cross each other on the way to the next free socket.</param>
+	/// <param name="nth">Which socket to start looking at. Both sides are ordered the
+	/// same way — servers up the rack, outlets up the strip — so the nth server takes
+	/// the nth outlet and every cord in the rack runs parallel to its neighbours. Any
+	/// other rule, including spreading the servers evenly over the outlets, makes the
+	/// cords fan instead.</param>
 	private static int FreePortIn(CablingState state, ReadOnlySpan<int> devices,
-		LineKind line, float at = 0f)
+		LineKind line, int nth = 0)
 	{
 		foreach (int device in devices)
 		{
@@ -131,11 +135,52 @@ public static class RackWiring
 			{
 				continue;
 			}
-			int start = Math.Clamp((int)(at * (count - 1)), 0, count - 1);
+			int start = Math.Clamp(nth, 0, count - 1);
 			for (int step = 0; step < count; step++)
 			{
 				int port = state.PortOf(device, (start + step) % count);
 				if (state.LineOf(port) == line && state.IsFree(port))
+				{
+					return port;
+				}
+			}
+		}
+		return -1;
+	}
+
+	/// <summary>A socket on the uplink, taken column by column from one end of the
+	/// panel: both rows of the first column, then both rows of the next. Going along a
+	/// row instead spreads one server's neighbours across the whole panel, and the
+	/// cords cross on their way up.</summary>
+	/// <param name="nth">Which server of its half of the rack this is.</param>
+	/// <param name="fromStart">Which end of the panel to fill from.</param>
+	private static int UplinkPort(CablingState state, ReadOnlySpan<int> uplinks,
+		int nth, bool fromStart)
+	{
+		foreach (int device in uplinks)
+		{
+			int count = state.PortCountOf(device);
+			int rows = state.RowsOf(device);
+			int perRow = rows == 0 ? 0 : count / rows;
+			if (perRow == 0)
+			{
+				continue;
+			}
+			for (int step = 0; step < count; step++)
+			{
+				int k = nth + step;
+				int column = k / rows;
+				if (column >= perRow)
+				{
+					break;
+				}
+				// The two halves start on opposite rows, so the panel fills
+				// symmetrically about its middle: each half takes the row nearest the
+				// duct its cords come up first.
+				int row = fromStart ? rows - 1 - (k % rows) : k % rows;
+				int port = state.PortOf(device,
+					row * perRow + (fromStart ? column : perRow - 1 - column));
+				if (state.LineOf(port) == LineKind.Network && state.IsFree(port))
 				{
 					return port;
 				}

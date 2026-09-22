@@ -327,8 +327,12 @@ internal static class Program
 			pduA[rack] = s.AddDevice(DeviceKind.Pdu, rack, 24, 0, Feed.A);
 			pduB[rack] = s.AddDevice(DeviceKind.Pdu, rack, 24, 0, Feed.B);
 			int top = s.AddDevice(DeviceKind.Switch, rack, 0, 48);
+			// the seed is picked so the sloppy rack is exposed but not already short of
+			// outlets: both inlets on one feed uses a second socket there, and enough of
+			// those in one rack run feed A out and take a server down before the sweep,
+			// which is a different story from the one this case is about
 			RackWiring.WireRack(s, racks[rack], pduA[rack], pduB[rack], top,
-				mistakeIn: rack == 0 ? 0 : 3, seed: 5);
+				mistakeIn: rack == 0 ? 0 : 3, seed: 1);
 		}
 
 		int sloppyExposed = Count(s, racks[1], st => st.BothInletsOneFeed);

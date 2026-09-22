@@ -233,8 +233,14 @@ def make_switch():
 			         wall=1.8 * MM)
 			b.box((3 * MM, 2 * MM, 2 * MM), (x - 5 * MM, -4 * MM, row * 10 * MM + 7 * MM),
 			      "led_green")
-	b.box((40 * MM, 5 * MM, 24 * MM), (w / 2 - 60 * MM, 1 * MM, 0), "plastic_dark",
+	# Recessed label plate. As a plain raised block it reads as a socket someone
+	# forgot to model a hole in.
+	b.box((40 * MM, 3 * MM, 22 * MM), (w / 2 - 60 * MM, 2 * MM, 0), "plastic_dark",
 	      bevel=1 * MM)
+	b.box((26 * MM, 2 * MM, 8 * MM), (w / 2 - 60 * MM, 0, 3 * MM), "label", bevel=0.4 * MM)
+	for i in range(3):
+		b.cyl(1.6 * MM, 2 * MM, (w / 2 - 70 * MM + i * 9 * MM, 0, -6 * MM), "led_green",
+		      sides=6, rot=(90, 0, 0))
 	return b.finish("switch_1u")
 
 

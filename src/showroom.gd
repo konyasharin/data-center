@@ -601,7 +601,10 @@ func _populate(root: Node3D, index: int, entry: Dictionary) -> void:
 			_wiring.add_panel(entry, Vector3(0, y + U * 0.5, -face_z - 0.001),
 				Wiring.Kind.PATCH, 24, -0.2073, 0.018026, 0.0)
 		elif slot == 39 or slot == 36:
-			manager_tf.append(turned)
+			# 1U cable managers used to sit here. Their rings reach 16 mm out across
+			# the full 19", straight through the ducts' holders — and the duct does
+			# their job anyway, so the slot takes a blank instead.
+			blank_tf.append(centred)
 		elif slot == 38 or slot == 37:
 			switch_tf.append(turned)
 			# two rows of twelve on a 28 mm pitch, starting 60 mm in on the left

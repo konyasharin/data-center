@@ -790,13 +790,18 @@ func _cable_points(from_port: int, to_port: int,
 	var run: Vector3 = enter
 
 	var points := PackedVector3Array()
+	# Straight out of the connector first. Turning at the plug itself leaves the cord
+	# kinked across it at right angles, which is the twist visible at every socket;
+	# a real cord leaves the body in line with it and bends further along.
 	_step(points, from)
+	_step(points, from + _port_out[from_port] * 0.022)
 	_step(points, _onto(from, run, normal))
 	_step(points, Vector3(enter.x, from.y, enter.z))
 	for clip in clips:
 		_step(points, _clip_pos[clip] - _clip_out[clip] * lane)
 	_step(points, Vector3(leave.x, to.y, leave.z))
 	_step(points, _onto(to, run, normal))
+	_step(points, to + _port_out[to_port] * 0.022)
 	_step(points, to)
 	return _smooth(_chamfer(points, 0.012))
 

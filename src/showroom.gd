@@ -96,6 +96,7 @@ const SHOTS := [
 	["clip_macro", Vector3(-2.19, 1.16, -2.28), Vector3(-2.21, 1.17, -1.94)],
 	["port_macro", Vector3(-1.900, 1.075, -2.360), Vector3(-1.965, 1.056, -2.247)],
 	["panel_macro", Vector3(-2.107, 2.30, -2.38), Vector3(-2.107, 2.28, -2.05)],
+	["plug_macro", Vector3(-1.944, 1.068, -2.316), Vector3(-1.965, 1.0556, -2.250)],
 	["lod_near", Vector3(0.55, 1.45, -0.35), Vector3(-0.30, 1.30, -1.00)],
 	["lod_band", Vector3(2.60, 1.60, 1.90), Vector3(-0.60, 1.25, -0.90)],
 	["lod_far", Vector3(4.60, 1.70, 3.40), Vector3(-1.00, 1.20, -1.10)],
@@ -250,9 +251,18 @@ func _shoot() -> void:
 		door["node"].rotation.y = door["shut"] - deg_to_rad(105)
 		door["open"] = true
 
+	var shots := SHOTS.duplicate()
+	# a camera 90 mm off a real port, found from the wiring rather than from numbers
+	# worked out by hand — every hand-aimed close-up so far has missed
+	for nth in [0, 2, 40]:
+		var found := _wiring.debug_port(0, nth)
+		if not found.is_empty():
+			var at: Vector3 = found[0] + found[1] * 0.09
+			shots.append(["plug_%d" % nth, at, found[0]])
+
 	var dir := "user://shots"
 	DirAccess.make_dir_recursive_absolute(dir)
-	for shot in SHOTS:
+	for shot in shots:
 		camera.position = shot[1]
 		camera.look_at(shot[2], Vector3.UP)
 		# a few frames so SSAO, SSR and the light probes settle before the grab

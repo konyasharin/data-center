@@ -41,7 +41,7 @@ const REACH := 2.6           # metres: how far the player can plug something in
 const PICK_CONE := 0.055     # radians-ish: half-angle the crosshair forgives
 const MARKER := 0.014   # ring around a socket, so it is wider than the socket
 const CABLE_R := 0.0025
-const PLUG_OUT := 0.026   # where the cord leaves the connector body, off the socket face
+const PLUG_OUT := 0.040   # where the cord leaves the connector body, off the socket face
 const SAG := 0.16            # of the span, how far a loose cord droops
 # must match tools/blender/dclib/units.py: the gaps between the duct's fingers
 const SPINE_PITCH := 0.09
@@ -349,6 +349,31 @@ func _nearest_clip(entry: Dictionary, inv: Transform3D, side: float, height: flo
 			best_gap = gap
 			best = clip
 	return best
+
+
+func debug_port(rack_index: int, nth: int) -> Array:
+	## Where the nth occupied port of a rack is, so a diagnostic camera can be put in
+	## front of it instead of being aimed by hand at coordinates worked out on paper.
+	for entry in _racks:
+		if int(entry["index"]) != rack_index:
+			continue
+		var seen := 0
+		for port in range(entry["port_from"], entry["port_to"]):
+			if _bridge.IsFree(port):
+				continue
+			if seen == nth:
+				if "--portdump" in OS.get_cmdline_user_args():
+					print("port %d of rack %d: pos %v out %v line %d owner kind %d" % [
+						port, rack_index, _port_pos[port], _port_out[port],
+						_port_line[port], _bridge.KindOf(_bridge.OwnerOf(port))])
+					print("   plug body spans %v .. %v" % [
+						_port_pos[port] - _port_out[port] * 0.004,
+						_port_pos[port] + _port_out[port] * 0.016])
+					print("   cord starts at %v" % [
+						_port_pos[port] + _port_out[port] * PLUG_OUT])
+				return [_port_pos[port], _port_out[port]]
+			seen += 1
+	return []
 
 
 func racks() -> Array[Dictionary]:
@@ -694,7 +719,9 @@ func _plug(st: SurfaceTool, port: int, colour: Color) -> void:
 	var normal: Vector3 = _port_out[port]
 	var up := Vector3.UP if absf(normal.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
 	var basis := Basis.looking_at(-normal, up)
-	var body := 0.020
+	# The rim of a socket stands 7 mm proud, so a 20 mm body clears it by two and
+	# reads as flush — a connector you can see is one that stands well out of it.
+	var body := 0.032
 	var network := _port_line[port] == Line.NETWORK
 
 	# body sunk into the socket, then the strain relief where the cord leaves it

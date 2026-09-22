@@ -133,8 +133,11 @@ class Builder:
 		                ((t, depth, h - 2 * t), (-(w - t) / 2, 0, 0))):
 			out += self.box(sz, (at[0] + off[0], at[1] + sign * depth / 2, at[2] + off[2]),
 			                mat, bevel=bevel)
+		# Set in from the panel face. Flush, the floor's front face and the body's own
+		# are the same plane and the pair flickers — most visible on the PDU, where the
+		# strip's face is exactly there.
 		out += self.box((w - 2 * t, 1.5 * MM_, h - 2 * t),
-		                (at[0], at[1] - sign * 0.75 * MM_, at[2]), inner, bevel=0.0)
+		                (at[0], at[1] - sign * 1.8 * MM_, at[2]), inner, bevel=0.0)
 		return out
 
 	def cyl(self, radius, height, at=(0, 0, 0), mat="steel", sides=12, bevel=0.0,

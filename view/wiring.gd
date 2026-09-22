@@ -41,7 +41,10 @@ const REACH := 2.6           # metres: how far the player can plug something in
 const PICK_CONE := 0.055     # radians-ish: half-angle the crosshair forgives
 const MARKER := 0.014   # ring around a socket, so it is wider than the socket
 const CABLE_R := 0.0025
-const PLUG_OUT := 0.040   # where the cord leaves the connector body, off the socket face
+# Where the cord starts, measured off the socket face. It has to clear the boot at
+# the back of the connector: starting inside it, a cord that then turns sideways cuts
+# out through the boot's wall, which is the cable passing through the plug.
+const PLUG_OUT := 0.048
 const SAG := 0.16            # of the span, how far a loose cord droops
 # must match tools/blender/dclib/units.py: the gaps between the duct's fingers
 const SPINE_PITCH := 0.09
@@ -836,8 +839,8 @@ func _plug(mesh: _Buffer, port: int, colour: Color, shift := 0.0) -> void:
 		Vector3(0.0055 if network else 0.0060, 0.0045 if network else 0.0050, body * 0.5),
 		shell)
 	# the boot, which is the one part coloured like the cable
-	_prism(mesh, _port_pos[port] + seat + normal * (body + 0.004), basis,
-		Vector3(0.0038, 0.0038, 0.007), colour.darkened(0.35))
+	_prism(mesh, _port_pos[port] + seat + normal * (body + 0.005), basis,
+		Vector3(0.0040, 0.0040, 0.006), colour.darkened(0.35))
 	if network:
 		# the latch tab, which is what says "network" at a glance
 		_prism(mesh, _port_pos[port] + seat + normal * (body * 0.5) + basis.y * 0.0055, basis,
@@ -963,8 +966,9 @@ func _cable_points(from_port: int, to_port: int,
 
 func _lead(from: Vector3, plane: Vector3, normal: Vector3) -> float:
 	## How far the cord may run straight out of its connector: at most half the way to
-	## the plane it then turns onto, so it never has to come back.
-	return minf(0.045, absf((plane - from).dot(normal)) * 0.5)
+	## the plane it then turns onto, so it never has to come back — but always enough
+	## to be clear of the connector before it starts bending.
+	return clampf(absf((plane - from).dot(normal)) * 0.5, 0.010, 0.045)
 
 
 func _onto(point: Vector3, plane: Vector3, normal: Vector3) -> Vector3:

@@ -894,7 +894,7 @@ func _ghost_mesh() -> ArrayMesh:
 		for clip in _held_route:
 			_step(loose, _clip_pos[clip] - _clip_out[clip] * lane)
 		_step(loose, camera.global_position + (-camera.global_transform.basis.z) * 0.5)
-		points = _smooth(_chamfer(loose, 0.010))
+		points = _smooth(_smooth(_chamfer(loose, 0.020)))
 
 	_tube(mesh, points, COLOUR["held"])
 	return mesh.commit()
@@ -932,26 +932,62 @@ func _cable_points(from_port: int, to_port: int,
 	var run: Vector3 = enter
 
 	var points := PackedVector3Array()
-	# Straight out of the connector first. Turning at the plug itself leaves the cord
-	# kinked across it at right angles, which is the twist visible at every socket;
-	# a real cord leaves the body in line with it and bends further along.
+	# Straight out of the connector first — a cord leaves a connector in line with it
+	# and bends further along. Never past the plane it is heading for, though: on a
+	# PDU outlet the duct is only some 35 mm behind the socket, and a fixed 45 mm run
+	# overshoots it and doubles the cord back on itself.
+	# Where the duct is closer to the panel than the connector is long — a switch
+	# sits some 25 mm off it and the plug stands 40 — the cord cannot turn onto the
+	# duct's plane without doubling back. It runs sideways at its own depth instead,
+	# which is what a short patch lead does anyway.
+	var plane_from := run if absf((run - from).dot(normal)) > 0.012 else from
 	_step(points, from)
-	_step(points, from + _port_out[from_port] * 0.045)
-	_step(points, _onto(from, run, normal))
+	_step(points, from + _port_out[from_port] * _lead(from, plane_from, normal))
+	_step(points, _onto(from, plane_from, normal))
+	# sideways at the depth the cord is already on, then into the gap — turning onto
+	# the duct's plane first is the doubling back
+	_step(points, _onto(Vector3(enter.x, from.y, enter.z), plane_from, normal))
 	_step(points, Vector3(enter.x, from.y, enter.z))
 	for clip in clips:
 		_step(points, _clip_pos[clip] - _clip_out[clip] * lane)
 	_step(points, Vector3(leave.x, to.y, leave.z))
-	_step(points, _onto(to, run, normal))
-	_step(points, to + _port_out[to_port] * 0.045)
+	var plane_to := run if absf((run - to).dot(normal)) > 0.012 else to
+	_step(points, _onto(Vector3(leave.x, to.y, leave.z), plane_to, normal))
+	_step(points, _onto(to, plane_to, normal))
+	_step(points, to + _port_out[to_port] * _lead(to, plane_to, normal))
 	_step(points, to)
-	return _smooth(_chamfer(points, 0.012))
+	# Chamfer, then smooth twice. One pass leaves a visible corner where the cord
+	# turns out of the connector, which is the kink at the top row of patch leads.
+	return _smooth(_smooth(_chamfer(_unkink(points), 0.020)))
+
+
+func _lead(from: Vector3, plane: Vector3, normal: Vector3) -> float:
+	## How far the cord may run straight out of its connector: at most half the way to
+	## the plane it then turns onto, so it never has to come back.
+	return minf(0.045, absf((plane - from).dot(normal)) * 0.5)
 
 
 func _onto(point: Vector3, plane: Vector3, normal: Vector3) -> Vector3:
 	## Slides a point along the normal until it lies on the plane through `plane`, so
 	## the leg stays square whichever way the cabinet is turned.
 	return point + normal * (plane - point).dot(normal)
+
+
+func _unkink(points: PackedVector3Array) -> PackedVector3Array:
+	## Drops any point the path has to double back through. A tube has no continuous
+	## cross-section across a 180 degree turn: it either tears a hole or throws a
+	## spike, and both have been visible on these cords.
+	if points.size() < 3:
+		return points
+	var out := PackedVector3Array([points[0]])
+	for i in range(1, points.size() - 1):
+		var back: Vector3 = (points[i] - out[out.size() - 1]).normalized()
+		var ahead: Vector3 = (points[i + 1] - points[i]).normalized()
+		if back.length_squared() > 0.5 and ahead.length_squared() > 0.5 				and back.dot(ahead) < -0.25:
+			continue
+		out.append(points[i])
+	out.append(points[points.size() - 1])
+	return out
 
 
 func _step(points: PackedVector3Array, at: Vector3) -> void:
@@ -1086,12 +1122,6 @@ func _tube(mesh: _Buffer, points: PackedVector3Array, colour: Color) -> void:
 		normals.append(ring_n)
 
 	for i in rings.size() - 1:
-		# A run that doubles back has no continuous section through the turn; carrying
-		# one across it is what threw metre-long shards off the cable. Skip the joint.
-		var d1: Vector3 = (points[i] - points[maxi(i - 1, 0)]).normalized()
-		var d2: Vector3 = (points[i + 1] - points[i]).normalized()
-		if i > 0 and d1.dot(d2) < -0.3:
-			continue
 		for s in sides:
 			var n := (s + 1) % sides
 			_quad(mesh, rings[i][s], rings[i][n], rings[i + 1][n], rings[i + 1][s], colour,

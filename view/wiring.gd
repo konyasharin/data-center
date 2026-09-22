@@ -112,12 +112,20 @@ var _aim_ring: MeshInstance3D      # the socket the crosshair is on
 var _held_ring: MeshInstance3D     # the end being held
 var _clips: MultiMeshInstance3D
 var _status: MultiMeshInstance3D
-var _cables: MeshInstance3D
+var _cables: Array[MeshInstance3D] = []   # one per rack, so a change is local
 var _ghost: MeshInstance3D
 var _held := -1
 var _hover := -1
 var _message := ""
 var _message_at := 0.0
+
+var _plug_in: AudioStream = preload("res://assets/audio/plug_in.wav")
+var _plug_out: AudioStream = preload("res://assets/audio/plug_out.wav")
+# the cord being seated: port, how far along, and which way
+var _seating := -1
+var _seat_t := 0.0
+var _seat_in := true
+var _seat_offset := 0.0
 
 
 # ------------------------------------------------------------------ building
@@ -271,9 +279,14 @@ func build() -> void:
 	_status.material_override = _flat_material()
 	add_child(_status)
 
-	_cables = MeshInstance3D.new()
-	_cables.material_override = _cable_material()
-	add_child(_cables)
+	# One mesh per rack rather than one for the hall: pulling a single cord used to
+	# rebuild every cord in the room, which is a visible stall on each click.
+	var cable_mat := _cable_material()
+	for i in _racks.size():
+		var node := MeshInstance3D.new()
+		node.material_override = cable_mat
+		add_child(node)
+		_cables.append(node)
 
 	# the cord being dragged is its own mesh: it is rebuilt every frame, and the other
 	# few hundred are not
@@ -397,7 +410,7 @@ func clear_message() -> void:
 	_message = ""
 
 
-func refresh() -> void:
+func refresh(slots: PackedInt32Array = PackedInt32Array()) -> void:
 	# anything that changes the patching from outside — wiring a rack, dropping a feed
 	# — can have taken the port the player is holding, or killed a dressed cord
 	if _held >= 0 and not _bridge.IsFree(_held):
@@ -407,7 +420,12 @@ func refresh() -> void:
 	_paint_markers()
 	_paint_clips()
 	_paint_status()
-	_cables.mesh = _cable_mesh()
+	if slots.is_empty():
+		for i in _racks.size():
+			_cables[i].mesh = _cable_mesh(i)
+	else:
+		for slot in slots:
+			_cables[slot].mesh = _cable_mesh(slot)
 	_ghost.mesh = _ghost_mesh()
 
 
@@ -521,13 +539,15 @@ func _click() -> void:
 		_paint_clips()
 		return
 
+	var touched := PackedInt32Array([_port_rack[_held], _port_rack[_hover]])
 	var result: int = _bridge.Connect(_held, _hover)
 	_say(RESULT_TEXT[result] if result < RESULT_TEXT.size() else "отказ %d" % result)
 	if result == 0:
 		_dress(_bridge.LastLink, _held_route)
+		_plugged(_hover, true)
 		_held = -1
 		_held_route = PackedInt32Array()
-	refresh()
+	refresh(touched)
 
 
 func _clip_click(clip: int) -> void:
@@ -555,10 +575,30 @@ func _unplug() -> void:
 	if link < 0:
 		_say("здесь ничего не воткнуто")
 		return
+	var touched := PackedInt32Array([_port_rack[_hover],
+		_port_rack[maxi(_bridge.OtherEnd(_hover), 0)]])
 	_undress(link)
 	_bridge.Disconnect(link)
+	_plugged(_hover, false)
 	_say("выдернуто")
-	refresh()
+	refresh(touched)
+
+
+func _plugged(port: int, going_in: bool) -> void:
+	## The click, and the short movement that goes with it. A connector that simply
+	## appears in a socket reads as a state flipping, not as a thing being pushed in.
+	var sound := AudioStreamPlayer3D.new()
+	sound.stream = _plug_in if going_in else _plug_out
+	sound.position = _port_pos[port]
+	sound.unit_size = 2.5
+	sound.max_db = -4.0
+	add_child(sound)
+	sound.play()
+	sound.finished.connect(sound.queue_free)
+
+	_seating = port
+	_seat_t = 0.0
+	_seat_in = going_in
 
 
 func _drop_held() -> void:
@@ -634,6 +674,14 @@ func _process(_delta: float) -> void:
 		_paint_markers()
 	if _held >= 0:
 		_ghost.mesh = _ghost_mesh()
+	if _seating >= 0:
+		_seat_t += _delta / 0.16
+		if _seat_t >= 1.0:
+			_seating = -1
+			_seat_t = 0.0
+		_seat_offset = (1.0 - _seat_t if _seat_in else _seat_t) * 0.05
+		refresh(PackedInt32Array([_port_rack[_seating]]) if _seating >= 0
+			else PackedInt32Array([]))
 
 
 ## Picking returns one number for two kinds of target: a port is its own index, a
@@ -691,38 +739,52 @@ func _aim(origin: Vector3, forward: Vector3, target: Vector3) -> float:
 
 # ------------------------------------------------------------------ geometry
 
-func _cable_mesh() -> ArrayMesh:
+func _cable_mesh(slot: int) -> ArrayMesh:
+	## Rebuilt only when the patching changes (docs/10: cables are procedural geometry,
+	## not a node per cord), and only for the rack that changed.
 	if "--nocables" in OS.get_cmdline_user_args():
 		return null
-	## Rebuilt only when the patching changes (docs/10: cables are procedural geometry,
-	## not a node per cord). One mesh for the hall, coloured per vertex.
+	var entry: Dictionary = _racks[slot]
 	var links: PackedInt32Array = _bridge.LiveLinks()
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 
+	var any := false
 	var i := 0
 	while i < links.size():
 		var from_port: int = links[i]
 		var to_port: int = links[i + 1]
+		i += 2
+		# drawn by the rack the cord starts in, so a cord between two racks is drawn
+		# exactly once
+		if _port_rack[from_port] != slot:
+			continue
+		any = true
 		var link: int = _bridge.LinkOf(from_port)
 		var colour := _line_colour(from_port)
 		_tube(st, _cable_points(from_port, to_port,
 			_routes.get(link, PackedInt32Array())), colour)
-		_plug(st, from_port, colour)
-		_plug(st, to_port, colour)
-		i += 2
+		_plug(st, from_port, colour, _seat_shift(from_port))
+		_plug(st, to_port, colour, _seat_shift(to_port))
 
+	if not any:
+		return null
 	st.generate_normals()
 	return st.commit()
 
 
-func _plug(st: SurfaceTool, port: int, colour: Color) -> void:
+func _seat_shift(port: int) -> float:
+	return _seat_offset if port == _seating else 0.0
+
+
+func _plug(st: SurfaceTool, port: int, colour: Color, shift := 0.0) -> void:
 	## The connector on the end of the cord. Without it the cable is a bare tube
 	## disappearing into a hole, and no cord ends like that — the moulded body sitting
 	## in the socket is most of what makes it read as plugged in rather than poked in.
 	var normal: Vector3 = _port_out[port]
 	var up := Vector3.UP if absf(normal.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
 	var basis := Basis.looking_at(-normal, up)
+	var seat := normal * shift
 	# The rim of a socket stands 7 mm proud, so a 20 mm body clears it by two and
 	# reads as flush — a connector you can see is one that stands well out of it.
 	var body := 0.032
@@ -732,15 +794,15 @@ func _plug(st: SurfaceTool, port: int, colour: Color) -> void:
 	# cord makes it read as the cord swelling up at the end. Clear-ish grey for a
 	# network plug, near-black for a power one, as the real parts are.
 	var shell := PLUG_NETWORK if network else PLUG_POWER
-	_prism(st, _port_pos[port] + normal * (body * 0.5 - 0.004), basis,
+	_prism(st, _port_pos[port] + seat + normal * (body * 0.5 - 0.004), basis,
 		Vector3(0.0055 if network else 0.0060, 0.0045 if network else 0.0050, body * 0.5),
 		shell)
 	# the boot, which is the one part coloured like the cable
-	_prism(st, _port_pos[port] + normal * (body + 0.004), basis,
+	_prism(st, _port_pos[port] + seat + normal * (body + 0.004), basis,
 		Vector3(0.0038, 0.0038, 0.007), colour.darkened(0.35))
 	if network:
 		# the latch tab, which is what says "network" at a glance
-		_prism(st, _port_pos[port] + normal * (body * 0.5) + basis.y * 0.0055, basis,
+		_prism(st, _port_pos[port] + seat + normal * (body * 0.5) + basis.y * 0.0055, basis,
 			Vector3(0.0022, 0.0018, body * 0.34), shell.lightened(0.10))
 
 
@@ -837,14 +899,14 @@ func _cable_points(from_port: int, to_port: int,
 	# kinked across it at right angles, which is the twist visible at every socket;
 	# a real cord leaves the body in line with it and bends further along.
 	_step(points, from)
-	_step(points, from + _port_out[from_port] * 0.022)
+	_step(points, from + _port_out[from_port] * 0.045)
 	_step(points, _onto(from, run, normal))
 	_step(points, Vector3(enter.x, from.y, enter.z))
 	for clip in clips:
 		_step(points, _clip_pos[clip] - _clip_out[clip] * lane)
 	_step(points, Vector3(leave.x, to.y, leave.z))
 	_step(points, _onto(to, run, normal))
-	_step(points, to + _port_out[to_port] * 0.022)
+	_step(points, to + _port_out[to_port] * 0.045)
 	_step(points, to)
 	return _smooth(_chamfer(points, 0.012))
 

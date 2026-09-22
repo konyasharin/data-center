@@ -197,9 +197,8 @@ func add_spine(entry: Dictionary, at: Vector3) -> void:
 	## be dressed in, and the numbers match tools/blender/dclib/units.py.
 	var xform: Transform3D = entry["xform"]
 	for i in SPINE_CLIPS:
-		# 44 mm out: the fingers reach 51 mm, so the pins stand at their mouth. Sunk
-		# further in nothing of them shows; further out they float clear of the duct.
-		var local := at + Vector3(0.0, SPINE_BASE + i * SPINE_PITCH, -0.044)
+		# the mouth of the holder moulded into the duct, 42 mm out past its lips
+		var local := at + Vector3(0.0, SPINE_BASE + i * SPINE_PITCH, -0.040)
 		_clip_pos.append(xform * local)
 		_clip_out.append((xform.basis * Vector3(0, 0, -1)).normalized())
 		_clip_load.append(0)
@@ -246,7 +245,7 @@ func build() -> void:
 
 	_clips = MultiMeshInstance3D.new()
 	_clips.multimesh = _instances(_clip_pos.size(), _clip_mesh())
-	_clips.material_override = _part_material()
+	_clips.material_override = _flat_material()
 	add_child(_clips)
 
 	_status = MultiMeshInstance3D.new()
@@ -378,8 +377,12 @@ func _prune_routes() -> void:
 
 
 func _paint_clips() -> void:
+	var shown := _held >= 0
 	for clip in _clip_pos.size():
 		_clips.multimesh.set_instance_color(clip, _clip_colour(clip))
+		_clips.multimesh.set_instance_transform(clip,
+			_facing(_clip_pos[clip], _clip_out[clip]) if shown
+			else Transform3D(Basis().scaled(Vector3.ONE * 0.001), _clip_pos[clip]))
 
 
 func _clip_colour(clip: int) -> Color:
@@ -694,11 +697,11 @@ func _ghost_mesh() -> ArrayMesh:
 		var loose := PackedVector3Array()
 		_step(loose, _port_pos[_held])
 		var normal := _clip_out[_held_route[0]]
-		var enter: Vector3 = _clip_pos[_held_route[0]] + normal * lane
+		var enter: Vector3 = _clip_pos[_held_route[0]] - normal * lane
 		_step(loose, _onto(_port_pos[_held], enter, normal))
 		_step(loose, Vector3(enter.x, _port_pos[_held].y, enter.z))
 		for clip in _held_route:
-			_step(loose, _clip_pos[clip] + _clip_out[clip] * lane)
+			_step(loose, _clip_pos[clip] - _clip_out[clip] * lane)
 		_step(loose, camera.global_position + (-camera.global_transform.basis.z) * 0.5)
 		points = _smooth(_chamfer(loose, 0.010))
 
@@ -722,9 +725,9 @@ func _cable_points(from_port: int, to_port: int,
 	# diagonally from socket to gap instead is what made a wired rack look like a
 	# bird's nest: it is the right-angle runs that read as tidy.
 	var lane := _lane(from_port)
-	var enter: Vector3 = _clip_pos[clips[0]] + _clip_out[clips[0]] * lane
+	var enter: Vector3 = _clip_pos[clips[0]] - _clip_out[clips[0]] * lane
 	var leave: Vector3 = _clip_pos[clips[clips.size() - 1]] \
-		+ _clip_out[clips[clips.size() - 1]] * lane
+		- _clip_out[clips[clips.size() - 1]] * lane
 
 	# Out of the socket, straight back to the depth the duct sits at, sideways at the
 	# socket's own height, and into the gap. Every leg is square to the last.
@@ -740,7 +743,7 @@ func _cable_points(from_port: int, to_port: int,
 	_step(points, _onto(from, run, normal))
 	_step(points, Vector3(enter.x, from.y, enter.z))
 	for clip in clips:
-		_step(points, _clip_pos[clip] + _clip_out[clip] * lane)
+		_step(points, _clip_pos[clip] - _clip_out[clip] * lane)
 	_step(points, Vector3(leave.x, to.y, leave.z))
 	_step(points, _onto(to, run, normal))
 	_step(points, to)
@@ -761,9 +764,11 @@ func _step(points: PackedVector3Array, at: Vector3) -> void:
 
 
 func _lane(port: int) -> float:
-	# How deep inside the gap a cord sits. Kept small: the dip into the duct and back
-	# out is a visible zigzag, and a deep one loops around the finger.
-	return 0.008 + (port % 6) * 0.004
+	## How far *in* from the holder's mouth a cord sits — between the lips and the
+	## floor, so it is inside the recess rather than resting on the outside of it.
+	## Spread per cord, so a bundle is many cords and two that cross do not share a
+	## plane. Applied against the clip's outward normal, hence the sign at every use.
+	return 0.004 + (port % 5) * 0.0028
 
 
 
@@ -970,20 +975,11 @@ func _socket_mesh(size: float) -> Mesh:
 
 
 func _clip_mesh() -> Mesh:
-	## A pair of headed pins with the cord between them, standing off the mouth of the
-	## duct. Short and stubby on purpose: long ones read as white posts floating in
-	## front of the cabinet rather than as part of it.
-	##
-	## Built in code rather than Blender: it is four boxes and it has to be tinted per
-	## instance, which a glb surface cannot be.
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	for side in [-1.0, 1.0]:
-		var y: float = side * 0.0075
-		_solid(st, Vector3(0, y, 0.009), Vector3(0.0028, 0.0028, 0.009))
-		_solid(st, Vector3(0, y, 0.0205), Vector3(0.0048, 0.0048, 0.0035))
-	st.generate_normals()
-	return st.commit()
+	## The holder itself is moulded into cable_spine — a part the scene drops in front
+	## of the duct has nothing to attach to and floats. What is left here is the mark on
+	## its mouth, shown only while a cord is in hand, so it is the same open ring the
+	## sockets use.
+	return _socket_mesh(0.013)
 
 
 func _solid(st: SurfaceTool, centre: Vector3, half: Vector3) -> void:

@@ -211,6 +211,19 @@ def make_cable_spine():
 			# were coplanar with the finger's own and the pair tore into a black seam.
 			b.box((w - 34 * MM, 6 * MM, 15 * MM),
 			      (0, -depth + 11 * MM, zf - side * 5 * MM), "plastic_dark", bevel=1.0 * MM)
+
+		# The holder a cord is actually pushed into, one per gap: two cheeks, a floor
+		# between them and lips narrowing the mouth. Part of this model rather than an
+		# object the scene places, because a separate part sits in the open space
+		# between the fingers and reads as floating next to the duct — which is what it
+		# was doing — and because a channel with a visible recess is the whole point of
+		# the thing. The cord runs vertically through it.
+		for cheek in (-1, 1):
+			b.box((3 * MM, 22 * MM, 15 * MM), (cheek * 7.5 * MM, -32 * MM, z),
+			      "plastic_dark", bevel=0.8 * MM)
+			b.box((4.5 * MM, 4 * MM, 15 * MM), (cheek * 5 * MM, -42.5 * MM, z),
+			      "plastic_dark", bevel=0.8 * MM)
+		b.box((15 * MM, 4 * MM, 15 * MM), (0, -22 * MM, z), "plastic_dark", bevel=0.8 * MM)
 		# mounting slot in the back plate, between the finger pairs
 		b.box((14 * MM, 3 * MM, 22 * MM), (0, 2 * MM, z), "steel_dark", bevel=0.8 * MM)
 	return b.finish("cable_spine")

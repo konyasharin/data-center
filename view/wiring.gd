@@ -70,7 +70,8 @@ const OUTLET_SPAN := 1.3
 const ROLE := {SERVER = 0, FEED_A = 1, FEED_B = 2, SWITCH = 3, PATCH = 4}
 const PATTERN_PATH := "user://wiring_pattern.bin"
 const PATTERN_MAGIC := 0x50574344
-const PATTERN_VERSION := 1
+const PATTERN_VERSION := 2
+const PATTERN_TEXT := "user://wiring_pattern.txt"
 
 const COLOUR := {
 	"free_power": Color(0.14, 0.15, 0.18),
@@ -120,6 +121,7 @@ var _clip_hall := PackedInt32Array()   # -1 or +1: which side of the aisle, not 
 var _states := PackedInt32Array()      # per port, packed by the bridge
 var _routes := {}                      # link -> the clips a cord is dressed into
 var _pattern := PackedInt32Array()     # one rack's wiring, written down (see "pattern")
+var _pattern_rack := -1
 var _held_route := PackedInt32Array()
 
 # device bookkeeping the scene needs and the core does not
@@ -754,8 +756,10 @@ func learn(entry: Dictionary, keep := true) -> int:
 		for clip in clips:
 			pattern.append(_clip_key(entry, clip))
 	_pattern = pattern
+	_pattern_rack = entry["index"]
 	if keep:
 		_write_pattern()
+		_write_reading(entry)
 	return leaving
 
 
@@ -876,6 +880,7 @@ func _write_pattern() -> void:
 		return
 	file.store_32(PATTERN_MAGIC)
 	file.store_32(PATTERN_VERSION)
+	file.store_32(_pattern_rack)
 	file.store_32(_pattern.size())
 	for value in _pattern:
 		file.store_32(value)
@@ -885,14 +890,15 @@ func _read_pattern() -> void:
 	if not FileAccess.file_exists(PATTERN_PATH):
 		return
 	var file := FileAccess.open(PATTERN_PATH, FileAccess.READ)
-	if file == null or file.get_length() < 12:
+	if file == null or file.get_length() < 16:
 		return
 	if file.get_32() != PATTERN_MAGIC or file.get_32() != PATTERN_VERSION:
 		# An older pattern describes racks that no longer exist. Dropping it is right:
 		# migrating one would mean guessing what the player meant back then.
 		return
+	_pattern_rack = file.get_32()
 	var count := file.get_32()
-	if 12 + count * 4 > file.get_length():
+	if 16 + count * 4 > file.get_length():
 		return
 	var pattern := PackedInt32Array()
 	for i in count:
@@ -972,6 +978,116 @@ func _cords(pattern: PackedInt32Array) -> Dictionary:
 		clips.sort()
 		var key := "%s|%s|%s" % [ends[0], ends[1], clips]
 		bag[key] = bag.get(key, 0) + 1
+		at += 7 + count
+	return bag
+
+
+func _write_reading(entry: Dictionary) -> void:
+	## The same pattern in words. The binary is for the game; this is for whoever has
+	## to change the routing code so that it produces this by itself — a diff of port
+	## numbers says nothing, "server 3 goes to outlet 7 and is held in the third
+	## holder up the left duct" says all of it.
+	var lines := PackedStringArray()
+	lines.append("стойка %d, серверов %d, шнуров %d"
+		% [entry["index"], entry["servers"].size(), pattern_size()])
+	lines.append("держатели: сторона по коридору, номер снизу вверх (0..%d)"
+		% (SPINE_CLIPS - 1))
+	lines.append("")
+	var cords := PackedStringArray()
+	var at := 0
+	while at + 7 <= _pattern.size():
+		var count: int = _pattern[at + 6]
+		cords.append(_cord_reading(_pattern.slice(at, at + 7 + count)))
+		at += 7 + count
+	cords.sort()
+	lines.append_array(cords)
+
+	var file := FileAccess.open(PATTERN_TEXT, FileAccess.WRITE)
+	if file == null:
+		push_warning("wiring: reading not saved: %s"
+			% error_string(FileAccess.get_open_error()))
+		return
+	file.store_string("
+".join(lines) + "
+")
+	print("pattern: ", ProjectSettings.globalize_path(PATTERN_TEXT))
+
+
+func _cord_reading(cord: PackedInt32Array) -> String:
+	var ends := [cord.slice(0, 3), cord.slice(3, 6)]
+	# the server end first, so the lines sort into one block per server
+	if ends[1][0] == ROLE.SERVER:
+		ends.reverse()
+	var clips := PackedStringArray()
+	for i in cord[6]:
+		var key: int = cord[7 + i]
+		clips.append("%s%d" % ["Л" if key < SPINE_CLIPS else "П", key % SPINE_CLIPS])
+	return "%-26s -> %-26s %s" % [_end_reading(ends[0]), _end_reading(ends[1]),
+		"в воздухе" if clips.is_empty() else "держатели " + ", ".join(clips)]
+
+
+func _end_reading(end: PackedInt32Array) -> String:
+	match end[0]:
+		ROLE.SERVER:
+			var port := ["ввод 1", "ввод 2", "сеть"]
+			return "сервер %02d %s" % [end[1], port[end[2]] if end[2] < 3 else str(end[2])]
+		ROLE.FEED_A:
+			return "луч A розетка %02d" % end[2]
+		ROLE.FEED_B:
+			return "луч B розетка %02d" % end[2]
+		ROLE.SWITCH:
+			return "коммутатор порт %02d" % end[2]
+	return "патч-панель порт %02d" % end[2]
+
+
+func check_fit() -> void:
+	## --fitpattern: wire the cabinet the pattern came from with the current algorithm
+	## and print how the two differ, cord by cord. This is the loop for changing the
+	## routing: the player lays one rack out by hand, and this says what the code
+	## still does differently.
+	if _pattern.is_empty():
+		print("fit: образца нет — разведите стойку руками и нажмите G")
+		return
+	var entry := {}
+	for candidate in _racks:
+		if int(candidate["index"]) == _pattern_rack:
+			entry = candidate
+	if entry.is_empty():
+		print("fit: стойки %d больше нет в зале" % _pattern_rack)
+		return
+
+	var want := _readings(_pattern)
+	_strip(entry)
+	wire_rack(entry, 0, 1, true)
+	var got := _readings(_read_back(entry))
+
+	var same := 0
+	var extra := PackedStringArray()
+	var missing := PackedStringArray()
+	for line in got:
+		if want.has(line):
+			same += 1
+		else:
+			extra.append(line)
+	for line in want:
+		if not got.has(line):
+			missing.append(line)
+	extra.sort()
+	missing.sort()
+	print("fit: стойка %d — образец %d шнуров, алгоритм %d, совпало %d"
+		% [_pattern_rack, want.size(), got.size(), same])
+	for line in missing:
+		print("   образец:  %s" % line)
+	for line in extra:
+		print("   алгоритм: %s" % line)
+
+
+func _readings(pattern: PackedInt32Array) -> Dictionary:
+	var bag := {}
+	var at := 0
+	while at + 7 <= pattern.size():
+		var count: int = pattern[at + 6]
+		bag[_cord_reading(pattern.slice(at, at + 7 + count))] = true
 		at += 7 + count
 	return bag
 

@@ -82,6 +82,19 @@ func _ready() -> void:
 		get_tree().quit()
 		return
 
+	if "--fitpattern" in OS.get_cmdline_user_args():
+		_wiring.check_fit()
+		get_tree().quit()
+		return
+
+	if "--learn" in OS.get_cmdline_user_args():
+		# what the algorithm produces, written down in the same form as a hand-made
+		# pattern: the baseline the two are compared against, and it overwrites a
+		# saved one on purpose
+		_wiring.learn(_wiring.racks()[0])
+		get_tree().quit()
+		return
+
 	var player := ShowroomPlayer.new()
 	player.position = Vector3(3.4, PLENUM + 0.1, 0.0)
 	add_child(player)

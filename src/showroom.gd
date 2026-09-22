@@ -254,7 +254,7 @@ func _shoot() -> void:
 	var shots := SHOTS.duplicate()
 	# a camera 90 mm off a real port, found from the wiring rather than from numbers
 	# worked out by hand — every hand-aimed close-up so far has missed
-	for nth in [0, 2, 40]:
+	for nth in [0, 2, 40, 104]:
 		var found := _wiring.debug_port(0, nth)
 		if not found.is_empty():
 			var at: Vector3 = found[0] + found[1] * 0.09

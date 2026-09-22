@@ -44,7 +44,7 @@ const CABLE_R := 0.0025
 # Where the cord starts, measured off the socket face. It has to clear the boot at
 # the back of the connector: starting inside it, a cord that then turns sideways cuts
 # out through the boot's wall, which is the cable passing through the plug.
-const PLUG_OUT := 0.048
+const PLUG_OUT := 0.042
 const SAG := 0.16            # of the span, how far a loose cord droops
 # must match tools/blender/dclib/units.py: the gaps between the duct's fingers
 const SPINE_PITCH := 0.09
@@ -839,8 +839,8 @@ func _plug(mesh: _Buffer, port: int, colour: Color, shift := 0.0) -> void:
 		Vector3(0.0055 if network else 0.0060, 0.0045 if network else 0.0050, body * 0.5),
 		shell)
 	# the boot, which is the one part coloured like the cable
-	_prism(mesh, _port_pos[port] + seat + normal * (body + 0.005), basis,
-		Vector3(0.0040, 0.0040, 0.006), colour.darkened(0.35))
+	_prism(mesh, _port_pos[port] + seat + normal * (body + 0.006), basis,
+		Vector3(0.0040, 0.0040, 0.008), colour.darkened(0.35))
 	if network:
 		# the latch tab, which is what says "network" at a glance
 		_prism(mesh, _port_pos[port] + seat + normal * (body * 0.5) + basis.y * 0.0055, basis,
@@ -939,11 +939,13 @@ func _cable_points(from_port: int, to_port: int,
 	# and bends further along. Never past the plane it is heading for, though: on a
 	# PDU outlet the duct is only some 35 mm behind the socket, and a fixed 45 mm run
 	# overshoots it and doubles the cord back on itself.
-	# Where the duct is closer to the panel than the connector is long — a switch
-	# sits some 25 mm off it and the plug stands 40 — the cord cannot turn onto the
-	# duct's plane without doubling back. It runs sideways at its own depth instead,
-	# which is what a short patch lead does anyway.
-	var plane_from := run if absf((run - from).dot(normal)) > 0.012 else from
+	# Where the duct is closer to the panel than the connector is long — a switch sits
+	# some 25 mm off it and the plug stands 48 — the cord cannot turn onto the duct's
+	# plane without doubling back. It runs sideways in front of the connectors
+	# instead: level with them it goes straight through the plugs of every socket it
+	# passes, which is a row of cords skewered on their neighbours.
+	var clear_from: Vector3 = _port_pos[from_port] + normal * (PLUG_OUT + 0.022)
+	var plane_from := run if absf((run - from).dot(normal)) > 0.012 else clear_from
 	_step(points, from)
 	_step(points, from + _port_out[from_port] * _lead(from, plane_from, normal))
 	_step(points, _onto(from, plane_from, normal))
@@ -954,7 +956,8 @@ func _cable_points(from_port: int, to_port: int,
 	for clip in clips:
 		_step(points, _clip_pos[clip] - _clip_out[clip] * lane)
 	_step(points, Vector3(leave.x, to.y, leave.z))
-	var plane_to := run if absf((run - to).dot(normal)) > 0.012 else to
+	var clear_to: Vector3 = _port_pos[to_port] + normal * (PLUG_OUT + 0.022)
+	var plane_to := run if absf((run - to).dot(normal)) > 0.012 else clear_to
 	_step(points, _onto(Vector3(leave.x, to.y, leave.z), plane_to, normal))
 	_step(points, _onto(to, plane_to, normal))
 	_step(points, to + _port_out[to_port] * _lead(to, plane_to, normal))

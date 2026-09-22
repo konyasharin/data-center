@@ -146,7 +146,9 @@ func add_server(entry: Dictionary, at: Vector3, height: float, depth: float) -> 
 	## `at` is the chassis origin in rack space; the body runs from there toward -Z,
 	## so every socket is on the plane just behind its back face.
 	var device: int = _bridge.AddDevice(Kind.SERVER, entry["index"], 2, 1, FeedId.NONE)
-	var z := -(depth + 0.003)
+	# the face of the sockets moulded into the chassis rear, not the back of the body:
+	# a few millimetres out and the cord ends in the air just behind them
+	var z := -(depth - 0.003)
 	var y := height * 0.5
 	# two PSU inlets where the supplies actually are, NIC between them
 	_port(entry, device, at + Vector3(-0.142, y, z))
@@ -166,7 +168,7 @@ func add_strip(entry: Dictionary, at: Vector3, feed: int, outlets := OUTLETS) ->
 	var device: int = _bridge.AddDevice(Kind.PDU, entry["index"], outlets, 0, feed)
 	for i in outlets:
 		var up := OUTLET_BASE + i * OUTLET_SPAN / float(maxi(outlets - 1, 1))
-		_port(entry, device, at + Vector3(0.0, up, -0.030))
+		_port(entry, device, at + Vector3(0.0, up, -0.023))
 	if feed == FeedId.A:
 		entry["feed_a"].append(device)
 	else:

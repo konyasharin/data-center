@@ -208,7 +208,7 @@ def make_patch_panel():
 	      mat_faces={"-Y": "steel"})
 	for i in range(24):
 		x = -w / 2 + 34 * MM + i * (w - 68 * MM) / 23
-		b.box((13 * MM, 6 * MM, 15 * MM), (x, -1 * MM, 2 * MM), "mesh_black", bevel=0.6 * MM)
+		b.socket((13 * MM, 15 * MM), (x, -1 * MM, 2 * MM), depth=7 * MM, wall=1.6 * MM)
 		b.box((10 * MM, 2 * MM, 4 * MM), (x, -3 * MM, -10 * MM), "label")
 	for sx in (-1, 1):
 		b.cyl(3 * MM, 4 * MM, (sx * (w / 2 - 12 * MM), -1 * MM, 0), "plastic_dark",
@@ -229,8 +229,8 @@ def make_switch():
 	for row in (-1, 1):
 		for i in range(12):
 			x = -w / 2 + 60 * MM + i * 28 * MM
-			b.box((17 * MM, 7 * MM, 12 * MM), (x, -1 * MM, row * 10 * MM), "mesh_black",
-			      bevel=0.6 * MM)
+			b.socket((17 * MM, 12 * MM), (x, -1 * MM, row * 10 * MM), depth=7 * MM,
+			         wall=1.8 * MM)
 			b.box((3 * MM, 2 * MM, 2 * MM), (x - 5 * MM, -4 * MM, row * 10 * MM + 7 * MM),
 			      "led_green")
 	b.box((40 * MM, 5 * MM, 24 * MM), (w / 2 - 60 * MM, 1 * MM, 0), "plastic_dark",

@@ -596,14 +596,14 @@ func _populate(root: Node3D, index: int, entry: Dictionary) -> void:
 		if slot == 40:
 			patch_tf.append(turned)
 			# 24 in a row, 34 mm in from each edge of a 19" panel
-			_wiring.add_panel(entry, Vector3(0, y + U * 0.5, -face_z - 0.004),
+			_wiring.add_panel(entry, Vector3(0, y + U * 0.5, -face_z - 0.001),
 				Wiring.Kind.PATCH, 24, -0.2073, 0.018026, 0.0)
 		elif slot == 39 or slot == 36:
 			manager_tf.append(turned)
 		elif slot == 38 or slot == 37:
 			switch_tf.append(turned)
 			# two rows of twelve on a 28 mm pitch, starting 60 mm in on the left
-			_wiring.add_panel(entry, Vector3(0, y + U * 0.5, -face_z - 0.004),
+			_wiring.add_panel(entry, Vector3(0, y + U * 0.5, -face_z - 0.001),
 				Wiring.Kind.SWITCH, 24, -0.1813, 0.028, 0.020)
 		elif index % 3 == 2 and slot >= 6 and slot <= 9:
 			if slot == 6:

@@ -175,17 +175,19 @@ def make_pdu_strip():
 	b.box((26 * MM, 3 * MM, 14 * MM), (0, -32 * MM, h - 52 * MM), "screen_on", bevel=1 * MM)
 	for i in range(PDU_OUTLETS):
 		z = PDU_OUTLET_BASE + i * PDU_OUTLET_SPAN / (PDU_OUTLETS - 1)
-		b.cyl(11 * MM, 8 * MM, (0, -26 * MM, z), "plastic_dark", sides=8, rot=(90, 0, 0))
+		b.socket((19 * MM, 15 * MM), (0, -23 * MM, z), depth=7 * MM, wall=1.8 * MM,
+		         mat="plastic_dark", inner="mesh_black")
 		b.cyl(2.5 * MM, 3 * MM, (17 * MM, -29 * MM, z), "led_green", sides=6, rot=(90, 0, 0))
 	return b.finish("pdu_strip")
 
 
 def make_cable_spine():
-	"""Vertical finger duct for the rear channel of a cabinet.
+	"""Vertical cable duct for the rear channel of a cabinet.
 
-	Cords are pushed into the gaps between the fingers instead of hanging across the
-	rack, which is what keeps a wired cabinet readable: one bundle running straight
-	down, not forty diagonals. The gaps are the attachment points the scene picks up.
+	A column of holders on a back plate. A cord is pushed into a holder from the
+	aisle and runs down the recess, which is what keeps a wired cabinet readable: one
+	bundle running straight down, not forty diagonals across the back of the servers.
+	The holders are the attachment points the scene picks up.
 	"""
 	b = Builder()
 	h = SPINE_HEIGHT
@@ -197,35 +199,23 @@ def make_cable_spine():
 	# the thing every cord has to pass through to reach the PDU beside it.
 	b.box((w, 6 * MM, h), (0, 0, h / 2), "plastic_grey", bevel=1.5 * MM)
 
-	# Fingers in pairs either side of each gap, with the gap itself left open: a cord
-	# is pushed in sideways between two fingers and the returns hold it there. One
-	# block per gap read as a row of bricks, which is what looked unfinished.
-	for i in range(SPINE_CLIPS + 1):
-		z = SPINE_BASE + i * SPINE_PITCH - SPINE_PITCH / 2
-		for side in (-1, 1):
-			zf = z + side * 9 * MM
-			b.box((w - 22 * MM, depth - 10 * MM, 7 * MM), (0, -depth / 2, zf),
-			      "plastic_grey", bevel=1.2 * MM)
-			# The return bent back over the gap is what a cord goes in behind. Kept
-			# narrower and set in from the finger's tip: flush, its end and side faces
-			# were coplanar with the finger's own and the pair tore into a black seam.
-			b.box((w - 34 * MM, 6 * MM, 15 * MM),
-			      (0, -depth + 11 * MM, zf - side * 5 * MM), "plastic_dark", bevel=1.0 * MM)
-
-		# The holder a cord is actually pushed into, one per gap: two cheeks, a floor
-		# between them and lips narrowing the mouth. Part of this model rather than an
-		# object the scene places, because a separate part sits in the open space
-		# between the fingers and reads as floating next to the duct — which is what it
-		# was doing — and because a channel with a visible recess is the whole point of
-		# the thing. The cord runs vertically through it.
+	# One holder per pitch, and nothing else. There used to be a pair of fingers
+	# flanking each holder as well; being 9 mm off centre they overhung its mouth, so
+	# a cord went in underneath a slab. The holder is the fixing — two cheeks, a floor
+	# between them, lips narrowing the mouth — and a cord runs down the recess.
+	for i in range(SPINE_CLIPS):
+		z = SPINE_BASE + i * SPINE_PITCH
+		# Unbevelled: eighteen holders per duct and two ducts per rack, so the chamfer
+		# that is worth it on a door is 2500 triangles here for an edge nobody reads.
 		for cheek in (-1, 1):
-			b.box((3 * MM, 22 * MM, 15 * MM), (cheek * 7.5 * MM, -32 * MM, z),
-			      "plastic_dark", bevel=0.8 * MM)
-			b.box((4.5 * MM, 4 * MM, 15 * MM), (cheek * 5 * MM, -42.5 * MM, z),
-			      "plastic_dark", bevel=0.8 * MM)
-		b.box((15 * MM, 4 * MM, 15 * MM), (0, -22 * MM, z), "plastic_dark", bevel=0.8 * MM)
-		# mounting slot in the back plate, between the finger pairs
-		b.box((14 * MM, 3 * MM, 22 * MM), (0, 2 * MM, z), "steel_dark", bevel=0.8 * MM)
+			b.box((3 * MM, 24 * MM, 26 * MM), (cheek * 7.5 * MM, -32 * MM, z),
+			      "plastic_dark", bevel=0.0)
+			b.box((4.5 * MM, 4 * MM, 26 * MM), (cheek * 5 * MM, -43 * MM, z),
+			      "plastic_dark", bevel=0.0)
+		b.box((15 * MM, 5 * MM, 26 * MM), (0, -21.5 * MM, z), "plastic_dark", bevel=0.0)
+		# bracket tying the holder back to the plate
+		b.box((w - 16 * MM, 14 * MM, 6 * MM), (0, -10 * MM, z - 18 * MM), "plastic_grey",
+		      bevel=1.0 * MM)
 	return b.finish("cable_spine")
 
 

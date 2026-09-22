@@ -746,6 +746,11 @@ func _plug(st: SurfaceTool, port: int, colour: Color) -> void:
 
 func _prism(st: SurfaceTool, centre: Vector3, basis: Basis, half: Vector3,
 		colour: Color) -> void:
+	# Flat-shaded, and in its own smoothing group. generate_normals() averages the
+	# normals of vertices that share a position, so a connector sitting inside the
+	# cord and the socket picks up their normals too and ends up lit as if it were
+	# translucent.
+	st.set_smooth_group(-1)
 	var corners := PackedVector3Array()
 	for i in 8:
 		corners.append(centre + basis * Vector3(
@@ -962,6 +967,7 @@ func _tube(st: SurfaceTool, points: PackedVector3Array, colour: Color) -> void:
 				push_warning("cable reverses at %v (dot %.2f) in a run of %d" % [
 					points[i], d1.dot(d2), points.size()])
 
+	st.set_smooth_group(0)
 	var sides := 4
 	var rings: Array[PackedVector3Array] = []
 	var right := Vector3.ZERO

@@ -104,7 +104,8 @@ var _server_pos := PackedVector3Array()
 var _server_out := PackedVector3Array()
 var _racks: Array[Dictionary] = []
 
-var _markers: MultiMeshInstance3D
+var _aim_ring: MeshInstance3D      # the socket the crosshair is on
+var _held_ring: MeshInstance3D     # the end being held
 var _clips: MultiMeshInstance3D
 var _status: MultiMeshInstance3D
 var _cables: MeshInstance3D
@@ -241,10 +242,20 @@ func build() -> void:
 	print("wiring: %d racks, %d servers, %d ports, %d clips" % [
 		_racks.size(), _servers.size(), _port_pos.size(), _clip_pos.size()])
 
-	_markers = MultiMeshInstance3D.new()
-	_markers.multimesh = _instances(_port_pos.size(), _socket_mesh(MARKER))
-	_markers.material_override = _flat_material()
-	add_child(_markers)
+	# Two plain nodes, not an instance per socket. Hiding a MultiMesh instance by
+	# scaling its transform to nothing does not work — the scale is not kept, it reads
+	# back as 1, and every socket in the hall stayed ringed.
+	_aim_ring = MeshInstance3D.new()
+	_aim_ring.mesh = _socket_mesh(MARKER)
+	_aim_ring.material_override = _flat_material()
+	_aim_ring.visible = false
+	add_child(_aim_ring)
+
+	_held_ring = MeshInstance3D.new()
+	_held_ring.mesh = _socket_mesh(MARKER)
+	_held_ring.material_override = _flat_material()
+	_held_ring.visible = false
+	add_child(_held_ring)
 
 	_clips = MultiMeshInstance3D.new()
 	_clips.multimesh = _instances(_clip_pos.size(), _clip_mesh())
@@ -266,8 +277,6 @@ func build() -> void:
 	_ghost.material_override = _cable_material()
 	add_child(_ghost)
 
-	for i in _port_pos.size():
-		_markers.multimesh.set_instance_transform(i, _facing(_port_pos[i], _port_out[i]))
 	for i in _clip_pos.size():
 		_clips.multimesh.set_instance_transform(i, _facing(_clip_pos[i], _clip_out[i]))
 	for i in _servers.size():
@@ -373,6 +382,7 @@ func refresh() -> void:
 	_ghost.mesh = _ghost_mesh()
 
 
+
 func _prune_routes() -> void:
 	for link in _routes.keys():
 		if not _bridge.LinkLive(link):
@@ -380,12 +390,14 @@ func _prune_routes() -> void:
 
 
 func _paint_clips() -> void:
-	var shown := _held >= 0
+	# emptied rather than scaled away, for the same reason the rings are nodes
+	_clips.visible = _held >= 0
+	if not _clips.visible:
+		return
 	for clip in _clip_pos.size():
 		_clips.multimesh.set_instance_color(clip, _clip_colour(clip))
 		_clips.multimesh.set_instance_transform(clip,
-			_facing(_clip_pos[clip], _clip_out[clip]) if shown
-			else Transform3D(Basis().scaled(Vector3.ONE * 0.001), _clip_pos[clip]))
+			_facing(_clip_pos[clip], _clip_out[clip]))
 
 
 func _clip_colour(clip: int) -> Color:
@@ -404,16 +416,21 @@ func _clip_colour(clip: int) -> Color:
 
 
 func _paint_markers() -> void:
-	# one array across the bridge instead of five calls per port
+	## Two rings, not one per socket: the one the crosshair is on and the end being
+	## held. Ringing every free socket lights up the whole rack and buries the
+	## hardware under its own annotations — the ring answers "this one?", it is not a
+	## map of the room.
 	_states = _bridge.PortStates()
-	for port in _port_pos.size():
-		_markers.multimesh.set_instance_color(port, _marker_colour(port))
-		var shown := (_states[port] & FREE_BIT) != 0 or port == _hover or port == _held
-		_markers.multimesh.set_instance_transform(port,
-			_facing(_port_pos[port], _port_out[port]) if shown
-			# not zero: a degenerate basis has no usable normals and the rasteriser
-			# throws long shards off it
-			else Transform3D(Basis().scaled(Vector3.ONE * 0.001), _port_pos[port]))
+	_place_ring(_aim_ring, -1 if is_clip(_hover) else _hover)
+	_place_ring(_held_ring, _held)
+
+
+func _place_ring(ring: MeshInstance3D, port: int) -> void:
+	ring.visible = port >= 0
+	if port < 0:
+		return
+	ring.transform = _facing(_port_pos[port], _port_out[port])
+	ring.material_override.albedo_color = _marker_colour(port)
 
 
 func _marker_colour(port: int) -> Color:

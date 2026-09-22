@@ -95,6 +95,7 @@ const SHOTS := [
 	["duct_edge", Vector3(-2.05, 1.30, -2.62), Vector3(-2.15, 1.24, -1.95)],
 	["clip_macro", Vector3(-2.19, 1.16, -2.28), Vector3(-2.21, 1.17, -1.94)],
 	["port_macro", Vector3(-1.900, 1.075, -2.360), Vector3(-1.965, 1.056, -2.247)],
+	["panel_macro", Vector3(-2.107, 2.30, -2.38), Vector3(-2.107, 2.28, -2.05)],
 	["lod_near", Vector3(0.55, 1.45, -0.35), Vector3(-0.30, 1.30, -1.00)],
 	["lod_band", Vector3(2.60, 1.60, 1.90), Vector3(-0.60, 1.25, -0.90)],
 	["lod_far", Vector3(4.60, 1.70, 3.40), Vector3(-1.00, 1.20, -1.10)],

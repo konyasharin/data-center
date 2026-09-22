@@ -208,10 +208,10 @@ def make_server(units=1, name=None):
 	# going into nothing. Positions are what view/wiring.gd plugs into, so the two
 	# have to stay in step: inlets at +-0.33 of the width, port on the centreline.
 	for sx in (-1, 1):
-		b.socket((13 * MM, min(11 * MM, h * 0.5)), (sx * w * 0.33, back, cz),
-		         depth=6 * MM, wall=1.5 * MM)
-	b.socket((15 * MM, min(12 * MM, h * 0.45)), (0, back, cz - 8 * MM), depth=6 * MM,
-	         wall=1.6 * MM)
+		b.socket((13 * MM, min(11 * MM, h * 0.5)), (sx * w * 0.33, depth, cz),
+		         depth=6 * MM, wall=1.5 * MM, facing=1)
+	b.socket((15 * MM, min(12 * MM, h * 0.45)), (0, depth, cz - 8 * MM), depth=6 * MM,
+	         wall=1.6 * MM, facing=1)
 
 	return b.finish(name or f"server_{units}u", smooth_angle=0.0)
 

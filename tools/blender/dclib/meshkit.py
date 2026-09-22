@@ -109,26 +109,32 @@ class Builder:
 		return faces
 
 	def socket(self, size, at=(0, 0, 0), depth=0.006, wall=0.002, mat="mesh_black",
-	           inner="plastic_dark", bevel=0.0):
+	           inner="plastic_dark", bevel=0.0, facing=-1):
 		"""A connector you can plug something into: a rim standing proud of the panel
 		with a recess inside it and a floor at the back.
 
 		Sockets drawn as a solid block are the single thing that most makes hardware
 		look unfinished — a cord then ends against a flat face instead of going into
-		anything. `size` is the outside of the rim, `at` its centre on the panel face,
-		and the hole runs from there into +Y.
+		anything. `size` is the outside of the rim and `at` its centre on the panel
+		face.
+
+		`facing` is which way is *out*: -1 for the model's front (-Y, the usual case)
+		and +1 for a rear panel. Get it wrong and the rim is built into the body
+		instead of out of it — the socket then cannot be seen at all and a cord ends
+		against bare panel, which is precisely what it looks like.
 		"""
 		w, h = size
 		t = wall
+		sign = -1.0 if facing < 0 else 1.0
 		out = []
 		for sz, off in (((w, depth, t), (0, 0, (h - t) / 2)),
 		                ((w, depth, t), (0, 0, -(h - t) / 2)),
 		                ((t, depth, h - 2 * t), ((w - t) / 2, 0, 0)),
 		                ((t, depth, h - 2 * t), (-(w - t) / 2, 0, 0))):
-			out += self.box(sz, (at[0] + off[0], at[1] + depth / 2 - depth, at[2] + off[2]),
+			out += self.box(sz, (at[0] + off[0], at[1] + sign * depth / 2, at[2] + off[2]),
 			                mat, bevel=bevel)
-		out += self.box((w - 2 * t, 1.5 * MM_, h - 2 * t), (at[0], at[1], at[2]), inner,
-		                bevel=0.0)
+		out += self.box((w - 2 * t, 1.5 * MM_, h - 2 * t),
+		                (at[0], at[1] - sign * 0.75 * MM_, at[2]), inner, bevel=0.0)
 		return out
 
 	def cyl(self, radius, height, at=(0, 0, 0), mat="steel", sides=12, bevel=0.0,

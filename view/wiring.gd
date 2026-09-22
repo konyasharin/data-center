@@ -147,9 +147,9 @@ func add_server(entry: Dictionary, at: Vector3, height: float, depth: float) -> 
 	## `at` is the chassis origin in rack space; the body runs from there toward -Z,
 	## so every socket is on the plane just behind its back face.
 	var device: int = _bridge.AddDevice(Kind.SERVER, entry["index"], 2, 1, FeedId.NONE)
-	# the face of the sockets moulded into the chassis rear, not the back of the body:
-	# a few millimetres out and the cord ends in the air just behind them
-	var z := -(depth - 0.003)
+	# The chassis rear itself, which is where the sockets stand: they are built out of
+	# that face, not into it.
+	var z := -depth
 	var y := height * 0.5
 	# two PSU inlets where the supplies actually are, NIC between them
 	_port(entry, device, at + Vector3(-0.142, y, z))

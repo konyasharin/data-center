@@ -932,10 +932,24 @@ func _process(_delta: float) -> void:
 		return
 	# Label re-lays out its text on every assignment, and most frames it is the same
 	var text := ("WASD ходить · Shift бег · Space прыжок · F полёт · Esc мышь · Q выход"
+		+ "   [" + _build_stamp() + "]"
 		+ "\n" + _unwired_hint()
 		+ "\n" + _wiring.hud_text())
 	if text != _hud_label.text:
 		_hud_label.text = text
+
+
+func _build_stamp() -> String:
+	## When the running scene's script and models were last written. A scene left
+	## running does not pick up either, and then a fix that is already on disk looks
+	## like it was never made — which cost a whole round of this.
+	var offset: int = Time.get_time_zone_from_system()["bias"] * 60
+	var script_at := FileAccess.get_modified_time("res://view/wiring.gd") + offset
+	var model_at := FileAccess.get_modified_time(
+		"res://assets/models/hardware/server_1u.glb") + offset
+	return "код %s · модели %s" % [
+		Time.get_time_string_from_unix_time(script_at).substr(0, 5),
+		Time.get_time_string_from_unix_time(model_at).substr(0, 5)]
 
 
 func _unwired_hint() -> String:

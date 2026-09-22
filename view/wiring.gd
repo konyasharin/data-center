@@ -64,6 +64,14 @@ const OUTLETS := 24
 const OUTLET_BASE := 0.08
 const OUTLET_SPAN := 1.3
 
+# How a device is named in a pattern: what it does in the rack, not the order it
+# was built in. The two rows face opposite ways, so "the left PDU" is a different
+# feed depending on the row — "feed A" is the same thing everywhere.
+const ROLE := {SERVER = 0, FEED_A = 1, FEED_B = 2, SWITCH = 3, PATCH = 4}
+const PATTERN_PATH := "user://wiring_pattern.bin"
+const PATTERN_MAGIC := 0x50574344
+const PATTERN_VERSION := 1
+
 const COLOUR := {
 	"free_power": Color(0.14, 0.15, 0.18),
 	"free_network": Color(0.12, 0.18, 0.15),
@@ -108,8 +116,10 @@ var _port_rack := PackedInt32Array()   # index into _racks, for routing in rack 
 var _clip_pos := PackedVector3Array()
 var _clip_out := PackedVector3Array()
 var _clip_load := PackedInt32Array()
+var _clip_hall := PackedInt32Array()   # -1 or +1: which side of the aisle, not of the cabinet
 var _states := PackedInt32Array()      # per port, packed by the bridge
 var _routes := {}                      # link -> the clips a cord is dressed into
+var _pattern := PackedInt32Array()     # one rack's wiring, written down (see "pattern")
 var _held_route := PackedInt32Array()
 
 # device bookkeeping the scene needs and the core does not
@@ -159,6 +169,7 @@ func rack(index: int, xform: Transform3D) -> Dictionary:
 		"feed_a": PackedInt32Array(),
 		"feed_b": PackedInt32Array(),
 		"uplinks": PackedInt32Array(),
+		"patches": PackedInt32Array(),
 		"port_from": _port_pos.size(),
 		"port_to": _port_pos.size(),
 		"clip_from": _clip_pos.size(),
@@ -224,6 +235,8 @@ func add_panel(entry: Dictionary, centre: Vector3, kind: int, ports: int,
 		_port(entry, device, centre + Vector3(first_x + col * pitch, y, 0.0))
 	if kind == Kind.SWITCH:
 		entry["uplinks"].append(device)
+	else:
+		entry["patches"].append(device)
 	return device
 
 
@@ -231,12 +244,14 @@ func add_spine(entry: Dictionary, at: Vector3) -> void:
 	## The vertical finger duct. Every gap between two fingers is somewhere a cord can
 	## be dressed in, and the numbers match tools/blender/dclib/units.py.
 	var xform: Transform3D = entry["xform"]
+	var hall := 1 if (xform.basis * Vector3(at.x, 0, 0)).x >= 0.0 else -1
 	for i in SPINE_CLIPS:
 		# the mouth of the holder moulded into the duct, 42 mm out past its lips
 		var local := at + Vector3(0.0, SPINE_BASE + i * SPINE_PITCH, -0.040)
 		_clip_pos.append(xform * local)
 		_clip_out.append((xform.basis * Vector3(0, 0, -1)).normalized())
 		_clip_load.append(0)
+		_clip_hall.append(hall)
 	entry["clip_to"] = _clip_pos.size()
 
 
@@ -281,8 +296,10 @@ func build() -> void:
 			% [expected, _port_pos.size()])
 		return
 
-	print("wiring: %d racks, %d servers, %d ports, %d clips" % [
-		_racks.size(), _servers.size(), _port_pos.size(), _clip_pos.size()])
+	_read_pattern()
+	print("wiring: %d racks, %d servers, %d ports, %d clips, образец: %d" % [
+		_racks.size(), _servers.size(), _port_pos.size(), _clip_pos.size(),
+		pattern_size()])
 
 	# Two plain nodes, not an instance per socket. Hiding a MultiMesh instance by
 	# scaling its transform to nothing does not work — the scale is not kept, it reads
@@ -701,6 +718,264 @@ func rack_at(point: Vector3) -> Dictionary:
 	return best
 
 
+# ------------------------------------------------------- образец разводки
+
+## What a rack "should" look like is taste, not a rule, so it is not something the
+## core could decide and not something worth a table of constants: the player wires
+## one cabinet by hand, and that cabinet is written down and replayed over the hall.
+##
+## A cord is written down as what it joins, never as which port id it joined —
+## "second server, first inlet, to feed A, outlet 7, dressed into the third holder up
+## the left duct". Ids belong to this run; roles and holder heights are the same in
+## every cabinet, and survive a rack that is turned the other way round or has fewer
+## servers in it.
+
+func learn(entry: Dictionary, keep := true) -> int:
+	## Read the rack back into a pattern. Returns how many cords it could not write
+	## down, which are the ones running to a neighbouring cabinet.
+	var pattern := PackedInt32Array()
+	var seen := {}
+	var leaving := 0
+	for port in range(entry["port_from"], entry["port_to"]):
+		var link: int = _bridge.LinkOf(port)
+		if link < 0 or seen.has(link):
+			continue
+		seen[link] = true
+		var other: int = _bridge.OtherEnd(port)
+		var here := _address(entry, port)
+		var there := _address(entry, other)
+		if here[0] < 0 or there[0] < 0:
+			leaving += 1
+			continue
+		pattern.append_array(here)
+		pattern.append_array(there)
+		var clips: PackedInt32Array = _routes.get(link, PackedInt32Array())
+		pattern.append(clips.size())
+		for clip in clips:
+			pattern.append(_clip_key(entry, clip))
+	_pattern = pattern
+	if keep:
+		_write_pattern()
+	return leaving
+
+
+func spread() -> void:
+	## Lay the pattern in every cabinet, this one included, so the hall reads the same
+	## from either end of the aisle. Everything is pulled first: patching on top of
+	## what is already there fills the ports in an order nobody chose.
+	if _pattern.is_empty():
+		_say("образца нет: разведите стойку руками и нажмите G")
+		return
+	for entry in _racks:
+		_strip(entry)
+	var made := 0
+	var missed := 0
+	for entry in _racks:
+		var done := _lay(entry)
+		made += done[0]
+		missed += done[1]
+	refresh()
+	_say("разложено по образцу в %d стойках, шнуров: %d%s" % [
+		_racks.size(), made,
+		"" if missed == 0 else "; не легло: %d (стойка короче образца)" % missed])
+
+
+func pattern_size() -> int:
+	## Cords in the stored pattern, or 0 if there is none.
+	var at := 0
+	var cords := 0
+	while at + 7 <= _pattern.size():
+		at += 7 + _pattern[at + 6]
+		cords += 1
+	return cords
+
+
+func _strip(entry: Dictionary) -> void:
+	for port in range(entry["port_from"], entry["port_to"]):
+		var link: int = _bridge.LinkOf(port)
+		if link >= 0:
+			_undress(link)
+			_bridge.Disconnect(link)
+
+
+func _lay(entry: Dictionary) -> Array:
+	var made := 0
+	var missed := 0
+	var at := 0
+	while at + 7 <= _pattern.size():
+		var a := _port_at(entry, _pattern[at], _pattern[at + 1], _pattern[at + 2])
+		var b := _port_at(entry, _pattern[at + 3], _pattern[at + 4], _pattern[at + 5])
+		var count: int = _pattern[at + 6]
+		at += 7
+		var clips := PackedInt32Array()
+		for i in count:
+			var clip := _clip_of_key(entry, _pattern[at + i])
+			if clip >= 0:
+				clips.append(clip)
+		at += count
+		if a < 0 or b < 0 or _bridge.Connect(a, b) != 0:
+			missed += 1
+			continue
+		_dress(_bridge.LastLink, clips)
+		made += 1
+	return [made, missed]
+
+
+func _address(entry: Dictionary, port: int) -> PackedInt32Array:
+	## role, which device of that role, which of its ports. Role -1 means the port is
+	## in another cabinet.
+	var device: int = _bridge.OwnerOf(port)
+	for role in [ROLE.SERVER, ROLE.FEED_A, ROLE.FEED_B, ROLE.SWITCH, ROLE.PATCH]:
+		var nth := _role_devices(entry, role).find(device)
+		if nth < 0:
+			continue
+		for i in _bridge.PortCountOf(device):
+			if _bridge.PortOf(device, i) == port:
+				return PackedInt32Array([role, nth, i])
+		break
+	return PackedInt32Array([-1, -1, -1])
+
+
+func _port_at(entry: Dictionary, role: int, nth: int, ordinal: int) -> int:
+	var devices := _role_devices(entry, role)
+	if nth < 0 or nth >= devices.size():
+		return -1
+	var device: int = devices[nth]
+	if ordinal < 0 or ordinal >= _bridge.PortCountOf(device):
+		return -1
+	return _bridge.PortOf(device, ordinal)
+
+
+func _role_devices(entry: Dictionary, role: int) -> PackedInt32Array:
+	match role:
+		ROLE.SERVER: return entry["servers"]
+		ROLE.FEED_A: return entry["feed_a"]
+		ROLE.FEED_B: return entry["feed_b"]
+		ROLE.SWITCH: return entry["uplinks"]
+	return entry["patches"]
+
+
+func _clip_key(entry: Dictionary, clip: int) -> int:
+	## Which side of the aisle and how far up: the pair a holder keeps when the rack
+	## it belongs to is turned round.
+	var up := (clip - int(entry["clip_from"])) % SPINE_CLIPS
+	return (0 if _clip_hall[clip] < 0 else SPINE_CLIPS) + up
+
+
+func _clip_of_key(entry: Dictionary, key: int) -> int:
+	for clip in range(entry["clip_from"], entry["clip_to"]):
+		if _clip_key(entry, clip) == key:
+			return clip
+	return -1
+
+
+func _write_pattern() -> void:
+	var file := FileAccess.open(PATTERN_PATH, FileAccess.WRITE)
+	if file == null:
+		push_warning("wiring: pattern not saved: %s" % error_string(FileAccess.get_open_error()))
+		return
+	file.store_32(PATTERN_MAGIC)
+	file.store_32(PATTERN_VERSION)
+	file.store_32(_pattern.size())
+	for value in _pattern:
+		file.store_32(value)
+
+
+func _read_pattern() -> void:
+	if not FileAccess.file_exists(PATTERN_PATH):
+		return
+	var file := FileAccess.open(PATTERN_PATH, FileAccess.READ)
+	if file == null or file.get_length() < 12:
+		return
+	if file.get_32() != PATTERN_MAGIC or file.get_32() != PATTERN_VERSION:
+		# An older pattern describes racks that no longer exist. Dropping it is right:
+		# migrating one would mean guessing what the player meant back then.
+		return
+	var count := file.get_32()
+	if 12 + count * 4 > file.get_length():
+		return
+	var pattern := PackedInt32Array()
+	for i in count:
+		pattern.append(file.get_32())
+	_pattern = pattern
+
+
+func check_pattern() -> void:
+	## --pattern: learn rack 0 and lay it everywhere, then read every cabinet back and
+	## compare it with the pattern it was given. Copying wiring is exactly the kind of
+	## change that looks right on screen while a rack turned the other way round gets
+	## its feeds swapped, and that is not visible without counting.
+	var source: Dictionary = _racks[0]
+	# not kept: a diagnostic run must not overwrite the pattern the player saved
+	var leaving := learn(source, false)
+	print("pattern: %d cords learned from rack %d, %d left the rack"
+		% [pattern_size(), source["index"], leaving])
+	spread()
+
+	var want := _cords(_pattern)
+	var wrong := 0
+	for entry in _racks:
+		var got := _cords(_read_back(entry))
+		var extra := 0
+		var short := 0
+		var missing := ""
+		for key in got:
+			if got[key] != want.get(key, 0):
+				extra += 1
+		for key in want:
+			if not got.has(key):
+				# the rack is shorter than the pattern, or the pattern asked for a
+				# device this cabinet does not have
+				short += 1
+				if short <= 3:
+					missing += "
+      " + str(key)
+		if extra > 0:
+			print("   rack %d: %d cords the pattern never asked for" % [entry["index"], extra])
+			wrong += 1
+		if short > 0:
+			print("   rack %d: %d of %d pattern cords did not fit%s"
+				% [entry["index"], short, want.size(), missing])
+	print("pattern: %d racks, %d with cords the pattern never asked for"
+		% [_racks.size(), wrong])
+
+
+func _read_back(entry: Dictionary) -> PackedInt32Array:
+	var laid := PackedInt32Array()
+	var seen := {}
+	for port in range(entry["port_from"], entry["port_to"]):
+		var link: int = _bridge.LinkOf(port)
+		if link < 0 or seen.has(link):
+			continue
+		seen[link] = true
+		laid.append_array(_address(entry, port))
+		laid.append_array(_address(entry, _bridge.OtherEnd(port)))
+		var clips: PackedInt32Array = _routes.get(link, PackedInt32Array())
+		laid.append(clips.size())
+		for clip in clips:
+			laid.append(_clip_key(entry, clip))
+	return laid
+
+
+func _cords(pattern: PackedInt32Array) -> Dictionary:
+	## The pattern as a bag of cords rather than a sequence of words. Ports are handed
+	## out in build order, and the two rows are built mirrored, so the same wiring
+	## reads back in a different order in each row — comparing word by word calls that
+	## a difference when nothing is wrong.
+	var bag := {}
+	var at := 0
+	while at + 7 <= pattern.size():
+		var count: int = pattern[at + 6]
+		var ends := [pattern.slice(at, at + 3), pattern.slice(at + 3, at + 6)]
+		ends.sort()
+		var clips := Array(pattern.slice(at + 7, at + 7 + count))
+		clips.sort()
+		var key := "%s|%s|%s" % [ends[0], ends[1], clips]
+		bag[key] = bag.get(key, 0) + 1
+		at += 7 + count
+	return bag
+
+
 # ------------------------------------------------------------------ input
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -723,6 +998,20 @@ func _unhandled_input(event: InputEvent) -> void:
 						wire_rack(entry)
 			KEY_T:
 				drop_feed(FeedId.A)
+			KEY_G:
+				var camera := get_viewport().get_camera_3d()
+				if camera != null:
+					var entry := rack_at(camera.global_position)
+					if entry.is_empty():
+						_say("встаньте у стойки, которую надо запомнить")
+					else:
+						var leaving := learn(entry)
+						_say("образец снят со стойки %d, шнуров: %d%s" % [
+							entry["index"], pattern_size(),
+							"" if leaving == 0 else
+								"; ушли в соседнюю стойку и не вошли: %d" % leaving])
+			KEY_H:
+				spread()
 
 
 func _process(_delta: float) -> void:
@@ -1416,6 +1705,8 @@ func hud_text() -> String:
 	else:
 		lines.append("наведитесь на порт: ЛКМ — взять, ПКМ — выдернуть")
 	lines.append("R — подключить стойку целиком, T — увести луч A")
+	lines.append("G — запомнить эту стойку как образец, H — разложить так везде%s"
+		% ("" if _pattern.is_empty() else " (шнуров в образце: %d)" % pattern_size()))
 	if not _message.is_empty() and Time.get_ticks_msec() / 1000.0 - _message_at < 6.0:
 		lines.append("» %s" % _message)
 	return "\n".join(lines)

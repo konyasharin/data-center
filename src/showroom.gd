@@ -72,7 +72,14 @@ func _ready() -> void:
 		return
 
 	if "--shots" in OS.get_cmdline_user_args():
+		if "--pattern" in OS.get_cmdline_user_args():
+			_wiring.check_pattern()
 		_shoot()
+		return
+
+	if "--pattern" in OS.get_cmdline_user_args():
+		_wiring.check_pattern()
+		get_tree().quit()
 		return
 
 	var player := ShowroomPlayer.new()

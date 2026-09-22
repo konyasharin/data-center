@@ -212,10 +212,10 @@ def make_cable_spine():
 			      "plastic_dark", bevel=0.0)
 			b.box((4.5 * MM, 4 * MM, 26 * MM), (cheek * 5 * MM, -43 * MM, z),
 			      "plastic_dark", bevel=0.0)
-		b.box((15 * MM, 5 * MM, 26 * MM), (0, -21.5 * MM, z), "plastic_dark", bevel=0.0)
-		# bracket tying the holder back to the plate
-		b.box((w - 16 * MM, 14 * MM, 6 * MM), (0, -10 * MM, z - 18 * MM), "plastic_grey",
-		      bevel=1.0 * MM)
+		# The floor runs all the way back to the plate. Stopped short of it the holder
+		# hangs in mid air and needs a bracket under it, and that bracket is then a
+		# shelf sitting across the holder below.
+		b.box((15 * MM, 21 * MM, 26 * MM), (0, -13.5 * MM, z), "plastic_dark", bevel=0.0)
 	return b.finish("cable_spine")
 
 

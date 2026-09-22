@@ -418,22 +418,10 @@ func _paint_markers() -> void:
 func _marker_colour(port: int) -> Color:
 	if port == _held:
 		return COLOUR["held"]
-	if port == _hover:
-		if _held >= 0:
-			var verdict: int = _bridge.CanConnect(_held, port)
-			return COLOUR["hover"] if verdict == 0 else COLOUR["blocked"]
-		return COLOUR["hover"]
-
-	var bits: int = _states[port]
-	if bits & FREE_BIT:
-		# Idle, a free socket is a faint plate: three thousand lit squares is all the
-		# player sees otherwise. With a cord in hand the ones it could go into light up,
-		# which is the only moment they are worth looking at.
-		var network := (bits & LINE_BIT) != 0
-		if _held >= 0:
-			return (COLOUR["open_network"] if network else COLOUR["open_power"]) 				if network == ((_states[_held] & LINE_BIT) != 0) 				else (COLOUR["free_network"] if network else COLOUR["free_power"])
-		return COLOUR["free_network"] if network else COLOUR["free_power"]
-	return _line_colour(port)
+	if port == _hover and _held >= 0:
+		return (COLOUR["hover"] if _bridge.CanConnect(_held, port) == 0
+			else COLOUR["blocked"])
+	return COLOUR["hover"]
 
 
 func _line_colour(port: int) -> Color:
@@ -668,13 +656,53 @@ func _cable_mesh() -> ArrayMesh:
 	var i := 0
 	while i < links.size():
 		var from_port: int = links[i]
+		var to_port: int = links[i + 1]
 		var link: int = _bridge.LinkOf(from_port)
-		_tube(st, _cable_points(from_port, links[i + 1],
-			_routes.get(link, PackedInt32Array())), _line_colour(from_port))
+		var colour := _line_colour(from_port)
+		_tube(st, _cable_points(from_port, to_port,
+			_routes.get(link, PackedInt32Array())), colour)
+		_plug(st, from_port, colour)
+		_plug(st, to_port, colour)
 		i += 2
 
 	st.generate_normals()
 	return st.commit()
+
+
+func _plug(st: SurfaceTool, port: int, colour: Color) -> void:
+	## The connector on the end of the cord. Without it the cable is a bare tube
+	## disappearing into a hole, and no cord ends like that — the moulded body sitting
+	## in the socket is most of what makes it read as plugged in rather than poked in.
+	var normal: Vector3 = _port_out[port]
+	var up := Vector3.UP if absf(normal.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
+	var basis := Basis.looking_at(-normal, up)
+	var body := 0.020
+	var network := _port_line[port] == Line.NETWORK
+
+	# body sunk into the socket, then the strain relief where the cord leaves it
+	_prism(st, _port_pos[port] + normal * (body * 0.5 - 0.004), basis,
+		Vector3(0.0055 if network else 0.0060, 0.0045 if network else 0.0050, body * 0.5),
+		colour.darkened(0.45))
+	_prism(st, _port_pos[port] + normal * (body + 0.003), basis,
+		Vector3(0.0035, 0.0035, 0.005), colour.darkened(0.25))
+	if network:
+		# the latch tab, which is the thing that says "network" at a glance
+		_prism(st, _port_pos[port] + normal * (body * 0.5) + basis.y * 0.0055, basis,
+			Vector3(0.0022, 0.0018, body * 0.34), colour.darkened(0.3))
+
+
+func _prism(st: SurfaceTool, centre: Vector3, basis: Basis, half: Vector3,
+		colour: Color) -> void:
+	var corners := PackedVector3Array()
+	for i in 8:
+		corners.append(centre + basis * Vector3(
+			half.x * (1.0 if (i & 1) else -1.0),
+			half.y * (1.0 if (i & 2) else -1.0),
+			half.z * (1.0 if (i & 4) else -1.0)))
+	for face in [[4, 6, 2, 0], [3, 7, 5, 1], [1, 5, 4, 0],
+			[6, 7, 3, 2], [2, 3, 1, 0], [5, 7, 6, 4]]:
+		_quad(st, corners[face[0]], corners[face[1]], corners[face[2]], corners[face[3]],
+			colour)
 
 
 func _ghost_mesh() -> ArrayMesh:

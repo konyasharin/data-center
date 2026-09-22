@@ -39,21 +39,21 @@ const ONE_FEED_BIT := 1 << 3
 
 const REACH := 2.6           # metres: how far the player can plug something in
 const PICK_CONE := 0.055     # radians-ish: half-angle the crosshair forgives
-const MARKER := 0.011
-const CABLE_R := 0.003
+const MARKER := 0.009
+const CABLE_R := 0.0025
 const SAG := 0.16            # of the span, how far a loose cord droops
 # must match tools/blender/dclib/units.py: the gaps between the duct's fingers
 const SPINE_PITCH := 0.09
 const SPINE_BASE := 0.10
 const SPINE_CLIPS := 18
 const CLIP_SPREAD := 0.004   # how far apart cords sit inside one gap
-const CLIP_FULL := 10        # cords in one gap before it reads as stuffed
+const CLIP_FULL := 16        # cords in one gap before it reads as stuffed
 # outlets up a PDU strip, from build_room.py: 80 mm up, 1.3 m of run
 const OUTLET_BASE := 0.08
 const OUTLET_SPAN := 1.3
 
 const COLOUR := {
-	"free_power": Color(0.55, 0.55, 0.58),
+	"free_power": Color(0.48, 0.48, 0.52),
 	"free_network": Color(0.38, 0.55, 0.48),
 	"feed_a": Color(0.78, 0.18, 0.14),
 	"feed_b": Color(0.20, 0.38, 0.82),
@@ -61,8 +61,8 @@ const COLOUR := {
 	"hover": Color(1.0, 1.0, 1.0),
 	"held": Color(1.0, 0.85, 0.2),
 	"blocked": Color(1.0, 0.25, 0.2),
-	"clip_free": Color(0.30, 0.32, 0.36),
-	"clip_used": Color(0.45, 0.52, 0.60),
+	"clip_free": Color(0.46, 0.50, 0.57),
+	"clip_used": Color(0.68, 0.76, 0.86),
 	"stuffed": Color(0.80, 0.45, 0.10),
 }
 
@@ -238,7 +238,7 @@ func build() -> void:
 	add_child(_markers)
 
 	_clips = MultiMeshInstance3D.new()
-	_clips.multimesh = _sprite_mesh(_clip_pos.size(), 0.018)
+	_clips.multimesh = _sprite_mesh(_clip_pos.size(), 0.014)
 	_clips.material_override = _flat_material()
 	add_child(_clips)
 
@@ -650,21 +650,27 @@ func _ghost_mesh() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 
-	# the cord follows the clips already chosen and then the crosshair, so the shape
-	# it will take is visible before committing to it
-	var points := PackedVector3Array([_port_pos[_held],
-		_port_pos[_held] + _port_out[_held] * 0.02])
-	for clip in _held_route:
-		points.append(_clip_pos[clip] + _clip_out[clip] * 0.016)
+	# Previewed exactly the way it will be built, so the shape is not a surprise once
+	# the second socket is clicked.
+	var points: PackedVector3Array
 	if _hover >= 0:
-		points.append(_port_pos[_hover] + _port_out[_hover] * 0.02)
-		points.append(_port_pos[_hover])
+		points = _cable_points(_held, _hover, _held_route)
+	elif _held_route.is_empty():
+		points = _droop(_port_pos[_held], _port_out[_held],
+			camera.global_position + (-camera.global_transform.basis.z) * 0.5, Vector3.UP)
 	else:
-		points.append(camera.global_position + (-camera.global_transform.basis.z) * 0.5)
+		var lane := _lane(_held)
+		var loose := PackedVector3Array()
+		_step(loose, _port_pos[_held])
+		var enter: Vector3 = _clip_pos[_held_route[0]] + _clip_out[_held_route[0]] * lane
+		_step(loose, Vector3(_port_pos[_held].x, _port_pos[_held].y, enter.z))
+		_step(loose, Vector3(enter.x, _port_pos[_held].y, enter.z))
+		for clip in _held_route:
+			_step(loose, _clip_pos[clip] + _clip_out[clip] * lane)
+		_step(loose, camera.global_position + (-camera.global_transform.basis.z) * 0.5)
+		points = _smooth(_chamfer(loose, 0.022))
 
-	_tube(st, _smooth(_smooth(points)) if points.size() > 2
-		else _droop(points[0], _port_out[_held], points[points.size() - 1], Vector3.UP),
-		COLOUR["held"])
+	_tube(st, points, COLOUR["held"])
 	st.generate_normals()
 	return st.commit()
 
@@ -679,14 +685,65 @@ func _cable_points(from_port: int, to_port: int,
 	if clips.is_empty():
 		return _droop(from, _port_out[from_port], to, _port_out[to_port])
 
-	var points := PackedVector3Array([from, from + _port_out[from_port] * 0.02])
-	# cords in one gap are spread across its depth, or a full duct is a solid slab
-	var lane := (from_port % 5) * CLIP_SPREAD
+	# A real cord leaves the socket straight back, turns once to the duct at its own
+	# height, runs the duct vertically and turns once more into the far socket. Going
+	# diagonally from socket to gap instead is what made a wired rack look like a
+	# bird's nest: it is the right-angle runs that read as tidy.
+	var lane := _lane(from_port)
+	var enter: Vector3 = _clip_pos[clips[0]] + _clip_out[clips[0]] * lane
+	var leave: Vector3 = _clip_pos[clips[clips.size() - 1]] \
+		+ _clip_out[clips[clips.size() - 1]] * lane
+
+	# Out of the socket, sideways along the face it sits on, and only then back to the
+	# duct and up it. Every leg is square to the last. Two things made the old version
+	# look thrown in: cutting the corner diagonally, and running that leg at the depth
+	# of the duct, which left cords floating 160 mm behind the servers they feed.
+	var near_from := from.z + (0.03 if enter.z > from.z else -0.03)
+	var near_to := to.z + (0.03 if leave.z > to.z else -0.03)
+
+	var points := PackedVector3Array()
+	_step(points, from)
+	_step(points, Vector3(from.x, from.y, near_from))
+	_step(points, Vector3(enter.x, from.y, near_from))
+	_step(points, Vector3(enter.x, from.y, enter.z))
 	for clip in clips:
-		points.append(_clip_pos[clip] + _clip_out[clip] * (0.012 + lane))
-	points.append(to + _port_out[to_port] * 0.02)
-	points.append(to)
-	return _smooth(_smooth(points))
+		_step(points, _clip_pos[clip] + _clip_out[clip] * lane)
+	_step(points, Vector3(leave.x, to.y, leave.z))
+	_step(points, Vector3(leave.x, to.y, near_to))
+	_step(points, Vector3(to.x, to.y, near_to))
+	_step(points, to)
+	return _smooth(_chamfer(points, 0.018))
+
+
+func _step(points: PackedVector3Array, at: Vector3) -> void:
+	## Corner points that land on top of each other turn into a kink once the path is
+	## chamfered, so a step that goes nowhere is dropped.
+	if points.is_empty() or points[points.size() - 1].distance_to(at) > 0.008:
+		points.append(at)
+
+
+func _lane(port: int) -> float:
+	# cords sharing a gap are spread across its depth, or a full duct is a solid slab
+	return 0.010 + ((port * 7) % 7) * CLIP_SPREAD
+
+
+func _chamfer(points: PackedVector3Array, radius: float) -> PackedVector3Array:
+	## Replaces each corner with two points a little way down its legs. A plain
+	## smoothing pass over right angles cuts them into long diagonals; chamfering first
+	## keeps the straight runs straight and leaves only the corner rounded.
+	if points.size() < 3:
+		return points
+	var out := PackedVector3Array([points[0]])
+	for i in range(1, points.size() - 1):
+		var here: Vector3 = points[i]
+		var back: Vector3 = points[i - 1]
+		var ahead: Vector3 = points[i + 1]
+		var in_len := here.distance_to(back)
+		var out_len := here.distance_to(ahead)
+		out.append(here + (back - here).normalized() * minf(radius, in_len * 0.45))
+		out.append(here + (ahead - here).normalized() * minf(radius, out_len * 0.45))
+	out.append(points[points.size() - 1])
+	return out
 
 
 func _droop(from: Vector3, from_out: Vector3, to: Vector3,

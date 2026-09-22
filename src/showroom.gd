@@ -42,6 +42,7 @@ const SHED_ORIGIN := Vector3(0, 0, 16.0)
 
 var _label_font: Font
 var _cabling := CablingBridge.new()
+var _doors: Array[Dictionary] = []
 var _wiring: Wiring
 var _hud_label: Label
 
@@ -89,6 +90,7 @@ const SHOTS := [
 	["front_detail", Vector3(-0.60, 1.35, 0.20), Vector3(-0.90, 1.28, -1.00)],
 	["rear_close", Vector3(-0.30, 1.55, -2.55), Vector3(-1.10, 1.30, -1.95)],
 	["rear_angle", Vector3(0.90, 1.70, -2.90), Vector3(-1.20, 1.25, -2.05)],
+	["duct_open", Vector3(-1.75, 1.45, -2.30), Vector3(-1.78, 1.30, -1.60)],
 	["lod_near", Vector3(0.55, 1.45, -0.35), Vector3(-0.30, 1.30, -1.00)],
 	["lod_band", Vector3(2.60, 1.60, 1.90), Vector3(-0.60, 1.25, -0.90)],
 	["lod_far", Vector3(4.60, 1.70, 3.40), Vector3(-1.00, 1.20, -1.10)],
@@ -236,6 +238,12 @@ func _shoot() -> void:
 	camera.far = 300
 	add_child(camera)
 	camera.make_current()
+
+	# the rear channel is what the cabling shots are about, and it sits behind a
+	# perforated door
+	for door in _doors:
+		door["node"].rotation.y = door["shut"] + deg_to_rad(105)
+		door["open"] = true
 
 	var dir := "user://shots"
 	DirAccess.make_dir_recursive_absolute(dir)
@@ -507,6 +515,7 @@ func _rack(at: Vector3, yaw: float, index: int, id: int) -> void:
 	rear.position = Vector3(RACK_W / 2, 0.01, -RACK_FRONT_Z - 0.004)
 	rear.rotation.y = PI
 	root.add_child(rear)
+	_doors.append({"node": rear, "at": root.global_position, "shut": PI, "open": false})
 
 	var entry: Dictionary = _wiring.rack(id, Transform3D(basis, at))
 	_fittings(root, entry, 2)
@@ -847,9 +856,60 @@ func _prewire() -> void:
 	_wiring.refresh()
 
 
+func _unhandled_input(event: InputEvent) -> void:
+	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_E:
+		_swing_door()
+
+
+func _swing_door() -> void:
+	## Opens the rear door of whichever cabinet the player is standing at. The ducts
+	## and the whole rear channel are behind a perforated door, so without this the
+	## thing the player is meant to be working on is only visible through holes.
+	var camera := get_viewport().get_camera_3d()
+	if camera == null:
+		return
+	var best := {}
+	var best_d := 2.0
+	for door in _doors:
+		var d: float = (door["at"] - camera.global_position).length()
+		if d < best_d:
+			best_d = d
+			best = door
+	if best.is_empty():
+		return
+
+	best["open"] = not best["open"]
+	var node: Node3D = best["node"]
+	var target: float = best["shut"] + (deg_to_rad(105) if best["open"] else 0.0)
+	var tween := create_tween()
+	tween.tween_property(node, "rotation:y", target, 0.45).set_trans(Tween.TRANS_CUBIC)
+
+
+func _crosshair(layer: CanvasLayer) -> void:
+	var dot := ColorRect.new()
+	dot.color = Color(1, 1, 1, 0.85)
+	dot.custom_minimum_size = Vector2(3, 3)
+	dot.set_anchors_preset(Control.PRESET_CENTER)
+	dot.size = Vector2(3, 3)
+	dot.position = Vector2(-1.5, -1.5)
+	layer.add_child(dot)
+	for horizontal in [true, false]:
+		var bar := ColorRect.new()
+		bar.color = Color(1, 1, 1, 0.35)
+		var length := 11.0
+		bar.size = Vector2(length, 1) if horizontal else Vector2(1, length)
+		bar.set_anchors_preset(Control.PRESET_CENTER)
+		bar.position = (Vector2(-length / 2, 0) if horizontal
+			else Vector2(0, -length / 2))
+		layer.add_child(bar)
+
+
 func _hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
+	_crosshair(layer)
 	_hud_label = Label.new()
 	_hud_label.position = Vector2(16, 12)
 	_hud_label.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0))

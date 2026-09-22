@@ -39,7 +39,7 @@ const ONE_FEED_BIT := 1 << 3
 
 const REACH := 2.6           # metres: how far the player can plug something in
 const PICK_CONE := 0.055     # radians-ish: half-angle the crosshair forgives
-const MARKER := 0.009
+const MARKER := 0.014   # ring around a socket, so it is wider than the socket
 const CABLE_R := 0.0025
 const SAG := 0.16            # of the span, how far a loose cord droops
 # must match tools/blender/dclib/units.py: the gaps between the duct's fingers
@@ -62,8 +62,8 @@ const COLOUR := {
 	"hover": Color(1.0, 1.0, 1.0),
 	"held": Color(1.0, 0.85, 0.2),
 	"blocked": Color(1.0, 0.25, 0.2),
-	"clip_free": Color(0.42, 0.45, 0.52),
-	"clip_used": Color(0.30, 0.34, 0.40),
+	"clip_free": Color(0.26, 0.28, 0.33),
+	"clip_used": Color(0.34, 0.38, 0.45),
 	"stuffed": Color(0.80, 0.45, 0.10),
 	# lit while a cord is in hand
 	"open_power": Color(0.90, 0.88, 0.60),
@@ -197,10 +197,9 @@ func add_spine(entry: Dictionary, at: Vector3) -> void:
 	## be dressed in, and the numbers match tools/blender/dclib/units.py.
 	var xform: Transform3D = entry["xform"]
 	for i in SPINE_CLIPS:
-		# 48 mm out, at the mouth of the duct: the fingers reach 51 mm and pins sunk
-		# inside them are simply not visible, which is what made the clips look like
-		# flat squares — the only part showing was their front face.
-		var local := at + Vector3(0.0, SPINE_BASE + i * SPINE_PITCH, -0.048)
+		# 44 mm out: the fingers reach 51 mm, so the pins stand at their mouth. Sunk
+		# further in nothing of them shows; further out they float clear of the duct.
+		var local := at + Vector3(0.0, SPINE_BASE + i * SPINE_PITCH, -0.044)
 		_clip_pos.append(xform * local)
 		_clip_out.append((xform.basis * Vector3(0, 0, -1)).normalized())
 		_clip_load.append(0)
@@ -241,7 +240,7 @@ func build() -> void:
 		_racks.size(), _servers.size(), _port_pos.size(), _clip_pos.size()])
 
 	_markers = MultiMeshInstance3D.new()
-	_markers.multimesh = _instances(_port_pos.size(), _pad_mesh(MARKER))
+	_markers.multimesh = _instances(_port_pos.size(), _socket_mesh(MARKER))
 	_markers.material_override = _flat_material()
 	add_child(_markers)
 
@@ -251,7 +250,7 @@ func build() -> void:
 	add_child(_clips)
 
 	_status = MultiMeshInstance3D.new()
-	_status.multimesh = _instances(_servers.size(), _pad_mesh(0.009))
+	_status.multimesh = _instances(_servers.size(), _pip_mesh(0.0045))
 	_status.material_override = _flat_material()
 	add_child(_status)
 
@@ -932,28 +931,57 @@ func _instances(count: int, mesh: Mesh) -> MultiMesh:
 	return mm
 
 
-func _pad_mesh(size: float) -> Mesh:
-	## A socket marker has to sit on a panel and still read as a part of it, so it is a
-	## shallow block rather than a decal: it catches the room light and has an edge.
-	var box := BoxMesh.new()
-	box.size = Vector3(size, size, size * 0.35)
-	return box
+func _pip_mesh(radius: float) -> Mesh:
+	## The per-server status light: a round lens, because a square one reads as a
+	## sticker on the chassis rather than as an indicator on it.
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var sides := 8
+	var depth := 0.0018
+	for i in sides:
+		var a := TAU * i / sides
+		var b := TAU * (i + 1) / sides
+		var p1 := Vector3(cos(a) * radius, sin(a) * radius, 0.0)
+		var p2 := Vector3(cos(b) * radius, sin(b) * radius, 0.0)
+		# lens face, then the rim, so it catches an edge highlight
+		_quad(st, Vector3(0, 0, depth), p1 + Vector3(0, 0, depth),
+			p2 + Vector3(0, 0, depth), Vector3(0, 0, depth), Color.WHITE)
+		_quad(st, p1, p2, p2 + Vector3(0, 0, depth), p1 + Vector3(0, 0, depth),
+			Color.WHITE)
+	st.generate_normals()
+	return st.commit()
+
+
+func _socket_mesh(size: float) -> Mesh:
+	## A ring around the socket, not a plate over it. Filled, the marker covers the
+	## connector the model already draws and the panel turns into a grid of coloured
+	## squares — which is what these looked like. Open, the socket stays visible and
+	## the ring only says what may be done with it.
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var half := size * 0.5
+	var t := 0.0016
+	var d := 0.0022
+	for side in [-1.0, 1.0]:
+		_solid(st, Vector3(side * (half - t), 0.0, d), Vector3(t, half, d))
+		_solid(st, Vector3(0.0, side * (half - t), d), Vector3(half - t * 2.0, t, d))
+	st.generate_normals()
+	return st.commit()
 
 
 func _clip_mesh() -> Mesh:
-	## A pair of pins with heads on them, 13 mm apart, sticking 22 mm out of the duct.
-	## A cord goes in between them and the heads keep it there — which is the shape the
-	## thing is named after. A block with a bump on it, which is what was here before,
-	## reads as a square from any distance a player actually stands at.
+	## A pair of headed pins with the cord between them, standing off the mouth of the
+	## duct. Short and stubby on purpose: long ones read as white posts floating in
+	## front of the cabinet rather than as part of it.
 	##
 	## Built in code rather than Blender: it is four boxes and it has to be tinted per
 	## instance, which a glb surface cannot be.
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for side in [-1.0, 1.0]:
-		var y: float = side * 0.008
-		_solid(st, Vector3(0, y, 0.014), Vector3(0.0026, 0.0026, 0.014))
-		_solid(st, Vector3(0, y, 0.030), Vector3(0.0048, 0.0048, 0.003))
+		var y: float = side * 0.0075
+		_solid(st, Vector3(0, y, 0.009), Vector3(0.0028, 0.0028, 0.009))
+		_solid(st, Vector3(0, y, 0.0205), Vector3(0.0048, 0.0048, 0.0035))
 	st.generate_normals()
 	return st.commit()
 
@@ -1000,7 +1028,7 @@ func _part_material() -> StandardMaterial3D:
 	# there is something to see at all.
 	mat.emission_enabled = true
 	mat.emission = Color(1, 1, 1)
-	mat.emission_energy_multiplier = 0.30
+	mat.emission_energy_multiplier = 0.12
 	return mat
 
 

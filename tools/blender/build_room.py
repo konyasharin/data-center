@@ -206,9 +206,11 @@ def make_cable_spine():
 			zf = z + side * 9 * MM
 			b.box((w - 22 * MM, depth - 10 * MM, 7 * MM), (0, -depth / 2, zf),
 			      "plastic_grey", bevel=1.2 * MM)
-			# the return bent back over the gap is what a cord goes in behind
-			b.box((w - 22 * MM, 6 * MM, 15 * MM),
-			      (0, -depth + 8 * MM, zf - side * 5 * MM), "plastic_dark", bevel=1.0 * MM)
+			# The return bent back over the gap is what a cord goes in behind. Kept
+			# narrower and set in from the finger's tip: flush, its end and side faces
+			# were coplanar with the finger's own and the pair tore into a black seam.
+			b.box((w - 34 * MM, 6 * MM, 15 * MM),
+			      (0, -depth + 11 * MM, zf - side * 5 * MM), "plastic_dark", bevel=1.0 * MM)
 		# mounting slot in the back plate, between the finger pairs
 		b.box((14 * MM, 3 * MM, 22 * MM), (0, 2 * MM, z), "steel_dark", bevel=0.8 * MM)
 	return b.finish("cable_spine")

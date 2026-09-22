@@ -34,7 +34,7 @@ const SHED_RACK := 100              # rack ids for the shed, out of reach of the
 # click is hidden behind something else.
 const STRIP_X := 0.262
 const SPINE_X := 0.19
-const CHANNEL_Z := -0.46
+const CHANNEL_Z := -0.42
 
 const HALL := Vector2i(20, 14)      # floor tiles
 const LOD_SWITCH := 9.0              # metres: detailed chassis inside, lod1 beyond
@@ -242,7 +242,7 @@ func _shoot() -> void:
 	# the rear channel is what the cabling shots are about, and it sits behind a
 	# perforated door
 	for door in _doors:
-		door["node"].rotation.y = door["shut"] + deg_to_rad(105)
+		door["node"].rotation.y = door["shut"] - deg_to_rad(105)
 		door["open"] = true
 
 	var dir := "user://shots"
@@ -518,7 +518,7 @@ func _rack(at: Vector3, yaw: float, index: int, id: int) -> void:
 	_doors.append({"node": rear, "at": root.global_position, "shut": PI, "open": false})
 
 	var entry: Dictionary = _wiring.rack(id, Transform3D(basis, at))
-	_fittings(root, entry, 2)
+	_fittings(root, entry, 1)
 	_populate(root, index, entry)
 
 
@@ -577,8 +577,8 @@ func _populate(root: Node3D, index: int, entry: Dictionary) -> void:
 	var manager_tf: Array[Transform3D] = []
 
 	var face_z := RACK_FRONT_Z - CHASSIS_INSET
-	# what 64 outlets can actually feed, two inlets each, is where this stops
-	var fill: int = [24, 20, 26, 18, 28, 16][index % 6]
+	# what 48 outlets can actually feed, two inlets each, is where this stops
+	var fill: int = [22, 18, 24, 16, 24, 14][index % 6]
 	var slot := 1
 	while slot < 41:
 		var y := PLINTH + slot * U + 0.001
@@ -882,7 +882,7 @@ func _swing_door() -> void:
 
 	best["open"] = not best["open"]
 	var node: Node3D = best["node"]
-	var target: float = best["shut"] + (deg_to_rad(105) if best["open"] else 0.0)
+	var target: float = best["shut"] - (deg_to_rad(105) if best["open"] else 0.0)
 	var tween := create_tween()
 	tween.tween_property(node, "rotation:y", target, 0.45).set_trans(Tween.TRANS_CUBIC)
 

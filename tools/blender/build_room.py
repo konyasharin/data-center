@@ -17,7 +17,8 @@ import bpy
 
 from dclib import exporter
 from dclib.meshkit import Builder, clear_scene
-from dclib.units import (MM, RACK_PANEL_WIDTH, SPINE_BASE, SPINE_CLIPS, SPINE_HEIGHT,
+from dclib.units import (MM, PDU_HEIGHT, PDU_OUTLET_BASE, PDU_OUTLET_SPAN, PDU_OUTLETS,
+                         RACK_PANEL_WIDTH, SPINE_BASE, SPINE_CLIPS, SPINE_HEIGHT,
                          SPINE_PITCH, U)
 
 TILE = 0.600
@@ -161,17 +162,21 @@ def make_cable_manager():
 
 
 def make_pdu_strip():
-	"""Vertical PDU that mounts in the rear channel rather than being part of the frame."""
+	"""Vertical PDU that mounts in the rear channel rather than being part of the frame.
+
+	24 outlets, because one strip per feed has to be able to carry the rack. Two
+	strips per feed would have to stand at different depths, and then the cords to the
+	deeper one run straight through the body of the nearer one."""
 	b = Builder()
-	h = 1.5
+	h = PDU_HEIGHT
 	b.box((46 * MM, 46 * MM, h), (0, 0, h / 2), "plastic_grey", bevel=3 * MM)
 	b.box((36 * MM, 10 * MM, 90 * MM), (0, -25 * MM, h - 70 * MM), "plastic_dark",
 	      bevel=2 * MM)
 	b.box((26 * MM, 3 * MM, 14 * MM), (0, -32 * MM, h - 52 * MM), "screen_on", bevel=1 * MM)
-	for i in range(16):
-		z = 80 * MM + i * (h - 200 * MM) / 15
-		b.cyl(13 * MM, 8 * MM, (0, -26 * MM, z), "plastic_dark", sides=8, rot=(90, 0, 0))
-		b.cyl(3 * MM, 3 * MM, (18 * MM, -29 * MM, z), "led_green", sides=6, rot=(90, 0, 0))
+	for i in range(PDU_OUTLETS):
+		z = PDU_OUTLET_BASE + i * PDU_OUTLET_SPAN / (PDU_OUTLETS - 1)
+		b.cyl(11 * MM, 8 * MM, (0, -26 * MM, z), "plastic_dark", sides=8, rot=(90, 0, 0))
+		b.cyl(2.5 * MM, 3 * MM, (17 * MM, -29 * MM, z), "led_green", sides=6, rot=(90, 0, 0))
 	return b.finish("pdu_strip")
 
 

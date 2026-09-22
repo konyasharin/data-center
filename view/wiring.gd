@@ -48,22 +48,27 @@ const SPINE_BASE := 0.10
 const SPINE_CLIPS := 18
 const CLIP_SPREAD := 0.004   # how far apart cords sit inside one gap
 const CLIP_FULL := 16        # cords in one gap before it reads as stuffed
-# outlets up a PDU strip, from build_room.py: 80 mm up, 1.3 m of run
+# outlets up a PDU strip; mirrors PDU_* in tools/blender/dclib/units.py
+const OUTLETS := 24
 const OUTLET_BASE := 0.08
 const OUTLET_SPAN := 1.3
 
 const COLOUR := {
-	"free_power": Color(0.48, 0.48, 0.52),
-	"free_network": Color(0.38, 0.55, 0.48),
+	"free_power": Color(0.14, 0.15, 0.18),
+	"free_network": Color(0.12, 0.18, 0.15),
 	"feed_a": Color(0.78, 0.18, 0.14),
 	"feed_b": Color(0.20, 0.38, 0.82),
 	"network": Color(0.22, 0.62, 0.30),
 	"hover": Color(1.0, 1.0, 1.0),
 	"held": Color(1.0, 0.85, 0.2),
 	"blocked": Color(1.0, 0.25, 0.2),
-	"clip_free": Color(0.46, 0.50, 0.57),
-	"clip_used": Color(0.68, 0.76, 0.86),
+	"clip_free": Color(0.20, 0.22, 0.26),
+	"clip_used": Color(0.30, 0.34, 0.40),
 	"stuffed": Color(0.80, 0.45, 0.10),
+	# lit while a cord is in hand
+	"open_power": Color(0.90, 0.88, 0.60),
+	"open_network": Color(0.55, 0.90, 0.70),
+	"clip_open": Color(0.85, 0.90, 1.00),
 }
 
 const STATUS_COLOUR := {
@@ -155,7 +160,7 @@ func add_server(entry: Dictionary, at: Vector3, height: float, depth: float) -> 
 	return device
 
 
-func add_strip(entry: Dictionary, at: Vector3, feed: int, outlets := 16) -> int:
+func add_strip(entry: Dictionary, at: Vector3, feed: int, outlets := OUTLETS) -> int:
 	## A 0U strip down the back channel. Outlets face the aisle, which is where the
 	## person doing the patching is standing.
 	var device: int = _bridge.AddDevice(Kind.PDU, entry["index"], outlets, 0, feed)
@@ -233,17 +238,17 @@ func build() -> void:
 		_racks.size(), _servers.size(), _port_pos.size()])
 
 	_markers = MultiMeshInstance3D.new()
-	_markers.multimesh = _sprite_mesh(_port_pos.size())
+	_markers.multimesh = _instances(_port_pos.size(), _pad_mesh(MARKER))
 	_markers.material_override = _flat_material()
 	add_child(_markers)
 
 	_clips = MultiMeshInstance3D.new()
-	_clips.multimesh = _sprite_mesh(_clip_pos.size(), 0.014)
+	_clips.multimesh = _instances(_clip_pos.size(), _clip_mesh())
 	_clips.material_override = _flat_material()
 	add_child(_clips)
 
 	_status = MultiMeshInstance3D.new()
-	_status.multimesh = _sprite_mesh(_servers.size(), 0.014)
+	_status.multimesh = _instances(_servers.size(), _pad_mesh(0.013))
 	_status.material_override = _flat_material()
 	add_child(_status)
 
@@ -377,6 +382,9 @@ func _clip_colour(clip: int) -> Color:
 		return COLOUR["hover"]
 	if _clip_load[clip] >= CLIP_FULL:
 		return COLOUR["stuffed"]
+	# same idea as the sockets: barely there until there is a cord to put away
+	if _held >= 0:
+		return COLOUR["clip_open"]
 	if _clip_load[clip] > 0:
 		return COLOUR["clip_used"]
 	return COLOUR["clip_free"]
@@ -387,6 +395,10 @@ func _paint_markers() -> void:
 	_states = _bridge.PortStates()
 	for port in _port_pos.size():
 		_markers.multimesh.set_instance_color(port, _marker_colour(port))
+		var shown := (_states[port] & FREE_BIT) != 0 or port == _hover or port == _held
+		_markers.multimesh.set_instance_transform(port,
+			_facing(_port_pos[port], _port_out[port]) if shown
+			else Transform3D(Basis().scaled(Vector3.ZERO), _port_pos[port]))
 
 
 func _marker_colour(port: int) -> Color:
@@ -400,8 +412,13 @@ func _marker_colour(port: int) -> Color:
 
 	var bits: int = _states[port]
 	if bits & FREE_BIT:
-		return (COLOUR["free_network"] if bits & LINE_BIT
-			else COLOUR["free_power"])
+		# Idle, a free socket is a faint plate: three thousand lit squares is all the
+		# player sees otherwise. With a cord in hand the ones it could go into light up,
+		# which is the only moment they are worth looking at.
+		var network := (bits & LINE_BIT) != 0
+		if _held >= 0:
+			return (COLOUR["open_network"] if network else COLOUR["open_power"]) 				if network == ((_states[_held] & LINE_BIT) != 0) 				else (COLOUR["free_network"] if network else COLOUR["free_power"])
+		return COLOUR["free_network"] if network else COLOUR["free_power"]
 	return _line_colour(port)
 
 
@@ -450,7 +467,9 @@ func _click() -> void:
 			return
 		_held = _hover
 		_say("держим конец: %s" % _describe(_hover))
+		# both the open sockets and the clips change appearance now
 		_paint_markers()
+		_paint_clips()
 		return
 
 	var result: int = _bridge.Connect(_held, _hover)
@@ -472,6 +491,7 @@ func _clip_click(clip: int) -> void:
 	else:
 		_held_route.append(clip)
 		_say("уложили в крепление (%d)" % _held_route.size())
+	_paint_clips()
 
 
 func _unplug() -> void:
@@ -662,8 +682,11 @@ func _ghost_mesh() -> ArrayMesh:
 		var lane := _lane(_held)
 		var loose := PackedVector3Array()
 		_step(loose, _port_pos[_held])
-		var enter: Vector3 = _clip_pos[_held_route[0]] + _clip_out[_held_route[0]] * lane
-		_step(loose, Vector3(_port_pos[_held].x, _port_pos[_held].y, enter.z))
+		var normal := _clip_out[_held_route[0]]
+		var bypass: Vector3 = _clip_pos[_held_route[0]] + normal * 0.055
+		var enter: Vector3 = _clip_pos[_held_route[0]] + normal * lane
+		_step(loose, _onto(_port_pos[_held], bypass, normal))
+		_step(loose, _onto(Vector3(enter.x, _port_pos[_held].y, enter.z), bypass, normal))
 		_step(loose, Vector3(enter.x, _port_pos[_held].y, enter.z))
 		for clip in _held_route:
 			_step(loose, _clip_pos[clip] + _clip_out[clip] * lane)
@@ -694,25 +717,33 @@ func _cable_points(from_port: int, to_port: int,
 	var leave: Vector3 = _clip_pos[clips[clips.size() - 1]] \
 		+ _clip_out[clips[clips.size() - 1]] * lane
 
-	# Out of the socket, sideways along the face it sits on, and only then back to the
-	# duct and up it. Every leg is square to the last. Two things made the old version
-	# look thrown in: cutting the corner diagonally, and running that leg at the depth
-	# of the duct, which left cords floating 160 mm behind the servers they feed.
-	var near_from := from.z + (0.03 if enter.z > from.z else -0.03)
-	var near_to := to.z + (0.03 if leave.z > to.z else -0.03)
+	# Out of the socket, out past the front of the duct, sideways at the socket's own
+	# height, then into the gap. Every leg is square to the last.
+	#
+	# The sideways leg has to clear the duct, not pass through it: the gaps sit behind
+	# the duct's back plate, so a cord that goes straight from a gap to a PDU outlet
+	# runs through the plate. That is what was disappearing into the geometry.
+	var normal := _clip_out[clips[0]]
+	var bypass: Vector3 = _clip_pos[clips[0]] + normal * 0.055
 
 	var points := PackedVector3Array()
 	_step(points, from)
-	_step(points, Vector3(from.x, from.y, near_from))
-	_step(points, Vector3(enter.x, from.y, near_from))
+	_step(points, _onto(from, bypass, normal))
+	_step(points, _onto(Vector3(enter.x, from.y, enter.z), bypass, normal))
 	_step(points, Vector3(enter.x, from.y, enter.z))
 	for clip in clips:
 		_step(points, _clip_pos[clip] + _clip_out[clip] * lane)
 	_step(points, Vector3(leave.x, to.y, leave.z))
-	_step(points, Vector3(leave.x, to.y, near_to))
-	_step(points, Vector3(to.x, to.y, near_to))
+	_step(points, _onto(Vector3(leave.x, to.y, leave.z), bypass, normal))
+	_step(points, _onto(to, bypass, normal))
 	_step(points, to)
 	return _smooth(_chamfer(points, 0.018))
+
+
+func _onto(point: Vector3, plane: Vector3, normal: Vector3) -> Vector3:
+	## Slides a point along the normal until it lies on the plane through `plane`, so
+	## the leg stays square whichever way the cabinet is turned.
+	return point + normal * (plane - point).dot(normal)
 
 
 func _step(points: PackedVector3Array, at: Vector3) -> void:
@@ -831,15 +862,49 @@ func _quad(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, d: Vector3,
 		st.add_vertex(v)
 
 
-func _sprite_mesh(count: int, size := MARKER) -> MultiMesh:
-	var quad := QuadMesh.new()
-	quad.size = Vector2(size, size)
+func _instances(count: int, mesh: Mesh) -> MultiMesh:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
-	mm.mesh = quad
+	mm.mesh = mesh
 	mm.instance_count = count
 	return mm
+
+
+func _pad_mesh(size: float) -> Mesh:
+	## A socket marker has to sit on a panel and still read as a part of it, so it is a
+	## shallow block rather than a decal: it catches the room light and has an edge.
+	var box := BoxMesh.new()
+	box.size = Vector3(size, size, size * 0.35)
+	return box
+
+
+func _clip_mesh() -> Mesh:
+	## A proper clip, not a square: a stalk standing off the duct with a lip bent over
+	## the top, which is what a cord is pushed in behind. Built here rather than in
+	## Blender because it is one part in two boxes and it has to be tinted per instance.
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_solid(st, Vector3(0, -0.003, 0.010), Vector3(0.0045, 0.014, 0.010))
+	_solid(st, Vector3(0, 0.009, 0.018), Vector3(0.0045, 0.005, 0.0025))
+	st.generate_normals()
+	return st.commit()
+
+
+func _solid(st: SurfaceTool, centre: Vector3, half: Vector3) -> void:
+	## Vertex colour stays white: the tint comes from the MultiMesh instance colour,
+	## which multiplies into it.
+	var corners := PackedVector3Array()
+	for i in 8:
+		corners.append(centre + Vector3(
+			half.x * (1.0 if (i & 1) else -1.0),
+			half.y * (1.0 if (i & 2) else -1.0),
+			half.z * (1.0 if (i & 4) else -1.0)))
+	var faces := [[0, 2, 6, 4], [1, 5, 7, 3], [0, 4, 5, 1],
+		[2, 3, 7, 6], [0, 1, 3, 2], [4, 6, 7, 5]]
+	for face in faces:
+		_quad(st, corners[face[0]], corners[face[1]], corners[face[2]], corners[face[3]],
+			Color.WHITE)
 
 
 func _facing(at: Vector3, normal: Vector3) -> Transform3D:

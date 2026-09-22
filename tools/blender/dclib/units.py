@@ -27,6 +27,13 @@ SERVER_GAP = 0.15 * MM
 def server_height(units: int = 1) -> float:
 	return units * U - 2 * SERVER_GAP
 
+# 0U PDU strip. One strip per feed has to carry a rack, so it is a 24-outlet unit;
+# src/showroom.gd and view/wiring.gd read the same numbers.
+PDU_HEIGHT = 1.5
+PDU_OUTLETS = 24
+PDU_OUTLET_BASE = 80 * MM               # lowest outlet, from the strip foot
+PDU_OUTLET_SPAN = 1.3                   # from the lowest outlet to the highest
+
 # Vertical cable duct down the rear channel of a cabinet. src/wiring.gd mirrors these
 # numbers to place the attachment points, so the two have to stay in step.
 SPINE_HEIGHT = 1.8

@@ -1009,6 +1009,7 @@ func _cable_points(from_port: int, to_port: int,
 	# height. Rising at the duct's own depth walks the cord through whatever plugs
 	# stand on that line — which a full-width switch always has.
 	_step(points, _onto(leave, plane_to, normal))
+
 	_step(points, _onto(Vector3(leave.x, to.y, leave.z), plane_to, normal))
 	_step(points, _onto(to, plane_to, normal))
 	_step(points, to + _port_out[to_port] * _lead(to, plane_to, normal))

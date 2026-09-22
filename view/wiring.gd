@@ -41,6 +41,7 @@ const REACH := 2.6           # metres: how far the player can plug something in
 const PICK_CONE := 0.055     # radians-ish: half-angle the crosshair forgives
 const MARKER := 0.014   # ring around a socket, so it is wider than the socket
 const CABLE_R := 0.0025
+const PLUG_OUT := 0.026   # where the cord leaves the connector body, off the socket face
 const SAG := 0.16            # of the span, how far a loose cord droops
 # must match tools/blender/dclib/units.py: the gaps between the duct's fingers
 const SPINE_PITCH := 0.09
@@ -720,15 +721,15 @@ func _ghost_mesh() -> ArrayMesh:
 	if _hover >= 0:
 		points = _cable_points(_held, _hover, _held_route)
 	elif _held_route.is_empty():
-		points = _droop(_port_pos[_held], _port_out[_held],
+		points = _droop(_port_pos[_held] + _port_out[_held] * PLUG_OUT, _port_out[_held],
 			camera.global_position + (-camera.global_transform.basis.z) * 0.5, Vector3.UP)
 	else:
 		var lane := _lane(_held)
 		var loose := PackedVector3Array()
-		_step(loose, _port_pos[_held])
+		_step(loose, _port_pos[_held] + _port_out[_held] * PLUG_OUT)
 		var normal := _clip_out[_held_route[0]]
 		var enter: Vector3 = _clip_pos[_held_route[0]] - normal * lane
-		_step(loose, _onto(_port_pos[_held], enter, normal))
+		_step(loose, _onto(_port_pos[_held] + _port_out[_held] * PLUG_OUT, enter, normal))
 		_step(loose, Vector3(enter.x, _port_pos[_held].y, enter.z))
 		for clip in _held_route:
 			_step(loose, _clip_pos[clip] - _clip_out[clip] * lane)
@@ -745,8 +746,11 @@ func _cable_points(from_port: int, to_port: int,
 	## A cord dressed into the duct runs through the gaps it was pushed into; one that
 	## was not simply hangs. That difference is the whole reason the ducts exist, so it
 	## has to be visible from across the aisle.
-	var from := _port_pos[from_port]
-	var to := _port_pos[to_port]
+	# The run starts where the cord leaves the connector body, not at the socket: a
+	# tube drawn from the socket face runs straight through the connector standing in
+	# front of it, and the first bend then happens inside it.
+	var from: Vector3 = _port_pos[from_port] + _port_out[from_port] * PLUG_OUT
+	var to: Vector3 = _port_pos[to_port] + _port_out[to_port] * PLUG_OUT
 	if clips.is_empty():
 		return _droop(from, _port_out[from_port], to, _port_out[to_port])
 

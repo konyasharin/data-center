@@ -272,14 +272,9 @@ def make_rack_frame(units=42, name=None):
 			b.detail((RAIL_W * 0.7, rail_h), (x, y - sy * (RAIL_T / 2 + 1.5 * MM), rail_z),
 			         texture="dc_rail_holes", tile=U, plane="XZ", facing=-sy)
 
-	b.box((44 * MM, 44 * MM, units * U * 0.8),
-	      (w / 2 - 80 * MM, d / 2 - 100 * MM, inner_bottom + units * U * 0.45),
-	      "plastic_grey", bevel=2 * MM)
-	for i in range(12):
-		b.cyl(11 * MM, 6 * MM,
-		      (w / 2 - 80 * MM, d / 2 - 124 * MM,
-		       inner_bottom + units * U * 0.1 + i * units * U * 0.06),
-		      "plastic_dark", sides=8, rot=(90, 0, 0))
+	# The vertical cable duct used to be moulded into the frame here. It is a separate
+	# part now (cable_spine), because the scene needs its finger gaps as attachment
+	# points; leaving both left the duct standing inside the frame's own version.
 
 	return b.finish(name or f"rack_{units}u_frame")
 

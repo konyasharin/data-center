@@ -189,12 +189,28 @@ def make_cable_spine():
 	"""
 	b = Builder()
 	h = SPINE_HEIGHT
-	b.box((56 * MM, 8 * MM, h), (0, 0, h / 2), "plastic_grey", bevel=2 * MM)
+	w = 56 * MM
+	depth = 52 * MM
+
+	# Back plate only. A finger duct is open at the sides on purpose — that is how a
+	# cord gets in without being threaded from one end — and side walls would also be
+	# the thing every cord has to pass through to reach the PDU beside it.
+	b.box((w, 6 * MM, h), (0, 0, h / 2), "plastic_grey", bevel=1.5 * MM)
+
+	# Fingers in pairs either side of each gap, with the gap itself left open: a cord
+	# is pushed in sideways between two fingers and the returns hold it there. One
+	# block per gap read as a row of bricks, which is what looked unfinished.
 	for i in range(SPINE_CLIPS + 1):
 		z = SPINE_BASE + i * SPINE_PITCH - SPINE_PITCH / 2
-		b.box((50 * MM, 46 * MM, 26 * MM), (0, -27 * MM, z), "plastic_grey", bevel=2 * MM)
-		# the lip is what stops a bundle falling back out of the duct
-		b.box((50 * MM, 8 * MM, 40 * MM), (0, -47 * MM, z), "plastic_dark", bevel=1.5 * MM)
+		for side in (-1, 1):
+			zf = z + side * 9 * MM
+			b.box((w - 22 * MM, depth - 10 * MM, 7 * MM), (0, -depth / 2, zf),
+			      "plastic_grey", bevel=1.2 * MM)
+			# the return bent back over the gap is what a cord goes in behind
+			b.box((w - 22 * MM, 6 * MM, 15 * MM),
+			      (0, -depth + 8 * MM, zf - side * 5 * MM), "plastic_dark", bevel=1.0 * MM)
+		# mounting slot in the back plate, between the finger pairs
+		b.box((14 * MM, 3 * MM, 22 * MM), (0, 2 * MM, z), "steel_dark", bevel=0.8 * MM)
 	return b.finish("cable_spine")
 
 

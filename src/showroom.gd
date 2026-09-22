@@ -29,12 +29,13 @@ const RACK_FRONT_Z := RACK_D / 2
 const CHASSIS_INSET := 0.081
 
 const SHED_RACK := 100              # rack ids for the shed, out of reach of the hall
-# Rear channel, looking at the back of a cabinet. The ducts stand inboard of the PDU
-# strips and clear of the server sockets at x = +-0.142, so nothing the player has to
-# click is hidden behind something else.
-const STRIP_X := 0.262
-const SPINE_X := 0.19
-const CHANNEL_Z := -0.42
+# Rear channel, looking at the back of a cabinet. The outer 40 mm of each side is
+# taken: mounting rails at x = +-0.25 and 60 mm corner posts from x = +-0.237 back to
+# the door. So both the duct and the strip live inboard of that, with the server
+# sockets at x = +-0.142 between them and nothing hiding anything else.
+const STRIP_X := 0.175
+const SPINE_X := 0.105
+const CHANNEL_Z := -0.44
 
 const HALL := Vector2i(20, 14)      # floor tiles
 const LOD_SWITCH := 9.0              # metres: detailed chassis inside, lod1 beyond
@@ -91,6 +92,7 @@ const SHOTS := [
 	["rear_close", Vector3(-0.30, 1.55, -2.55), Vector3(-1.10, 1.30, -1.95)],
 	["rear_angle", Vector3(0.90, 1.70, -2.90), Vector3(-1.20, 1.25, -2.05)],
 	["duct_open", Vector3(-1.75, 1.45, -2.30), Vector3(-1.78, 1.30, -1.60)],
+	["duct_edge", Vector3(-2.05, 1.30, -2.62), Vector3(-2.15, 1.24, -1.95)],
 	["lod_near", Vector3(0.55, 1.45, -0.35), Vector3(-0.30, 1.30, -1.00)],
 	["lod_band", Vector3(2.60, 1.60, 1.90), Vector3(-0.60, 1.25, -0.90)],
 	["lod_far", Vector3(4.60, 1.70, 3.40), Vector3(-1.00, 1.20, -1.10)],

@@ -6,26 +6,34 @@ extends CharacterBody3D
 
 const SPEED := 2.6
 const RUN := 6.0
+const CROUCH_SPEED := 1.2
 const FLY := 4.5
 const MOUSE := 0.0022
+const EYE := 1.65
+const CROUCH_EYE := 0.95   # low enough to work the bottom of a rack
+const STAND_H := 1.75
+const CROUCH_H := 1.05
 
 @export var flying := false
 
 var _camera: Camera3D
+var _shape: CollisionShape3D
+var _capsule: CapsuleShape3D
 var _pitch := 0.0
+var _crouching := false
 
 
 func _ready() -> void:
-	var shape := CollisionShape3D.new()
-	var capsule := CapsuleShape3D.new()
-	capsule.height = 1.75
-	capsule.radius = 0.3
-	shape.shape = capsule
-	shape.position.y = 0.875
-	add_child(shape)
+	_shape = CollisionShape3D.new()
+	_capsule = CapsuleShape3D.new()
+	_capsule.height = STAND_H
+	_capsule.radius = 0.3
+	_shape.shape = _capsule
+	_shape.position.y = STAND_H / 2
+	add_child(_shape)
 
 	_camera = Camera3D.new()
-	_camera.position.y = 1.65
+	_camera.position.y = EYE
 	_camera.fov = 70.0
 	_camera.far = 300.0
 	add_child(_camera)
@@ -57,7 +65,19 @@ func _physics_process(delta: float) -> void:
 		float(Input.is_key_pressed(KEY_S)) - float(Input.is_key_pressed(KEY_W)),
 	)
 	var dir := (transform.basis * input).normalized()
-	var speed := RUN if Input.is_key_pressed(KEY_SHIFT) else SPEED
+
+	# Ctrl crouches on the ground and descends in flight — the bottom of a rack is
+	# 50 mm off the floor and there is no seeing it standing up.
+	_crouching = not flying and Input.is_key_pressed(KEY_CTRL)
+	var wanted := CROUCH_H if _crouching else STAND_H
+	if not is_equal_approx(_capsule.height, wanted):
+		_capsule.height = move_toward(_capsule.height, wanted, 4.0 * delta)
+		_shape.position.y = _capsule.height / 2
+		_camera.position.y = EYE - (STAND_H - _capsule.height) * ((EYE - CROUCH_EYE)
+			/ (STAND_H - CROUCH_H))
+
+	var speed := CROUCH_SPEED if _crouching else (
+		RUN if Input.is_key_pressed(KEY_SHIFT) else SPEED)
 
 	if flying:
 		var lift := float(Input.is_key_pressed(KEY_SPACE)) - float(Input.is_key_pressed(KEY_CTRL))

@@ -244,7 +244,7 @@ func build() -> void:
 
 	_clips = MultiMeshInstance3D.new()
 	_clips.multimesh = _instances(_clip_pos.size(), _clip_mesh())
-	_clips.material_override = _flat_material()
+	_clips.material_override = _part_material()
 	add_child(_clips)
 
 	_status = MultiMeshInstance3D.new()
@@ -308,8 +308,13 @@ func _auto_route(entry: Dictionary, from_port: int, to_port: int) -> PackedInt32
 	if side == 0.0:
 		side = 1.0
 
-	var enter := _nearest_clip(entry, inv, side, a.y)
-	var leave := _nearest_clip(entry, inv, side, b.y)
+	# A gap outside the span between the two ends would send the cord down past it and
+	# back up — a 180 degree turn, which is both wrong and what threw spikes off the
+	# tube. Short hops stay undressed instead, which is what happens in a real rack.
+	var low := minf(a.y, b.y)
+	var high := maxf(a.y, b.y)
+	var enter := _nearest_clip(entry, inv, side, a.y, low, high)
+	var leave := _nearest_clip(entry, inv, side, b.y, low, high)
 	if enter < 0:
 		return PackedInt32Array()
 	if leave < 0 or leave == enter:
@@ -317,13 +322,13 @@ func _auto_route(entry: Dictionary, from_port: int, to_port: int) -> PackedInt32
 	return PackedInt32Array([enter, leave])
 
 
-func _nearest_clip(entry: Dictionary, inv: Transform3D, side: float,
-		height: float) -> int:
+func _nearest_clip(entry: Dictionary, inv: Transform3D, side: float, height: float,
+		low: float, high: float) -> int:
 	var best := -1
 	var best_gap := INF
 	for clip in range(entry["clip_from"], entry["clip_to"]):
 		var local := inv * _clip_pos[clip]
-		if signf(local.x) != side:
+		if signf(local.x) != side or local.y < low or local.y > high:
 			continue
 		# a stuffed gap is passed over rather than packed tighter
 		var gap := absf(local.y - height) + (0.4 if _clip_load[clip] >= CLIP_FULL else 0.0)
@@ -398,7 +403,9 @@ func _paint_markers() -> void:
 		var shown := (_states[port] & FREE_BIT) != 0 or port == _hover or port == _held
 		_markers.multimesh.set_instance_transform(port,
 			_facing(_port_pos[port], _port_out[port]) if shown
-			else Transform3D(Basis().scaled(Vector3.ZERO), _port_pos[port]))
+			# not zero: a degenerate basis has no usable normals and the rasteriser
+			# throws long shards off it
+			else Transform3D(Basis().scaled(Vector3.ONE * 0.001), _port_pos[port]))
 
 
 func _marker_colour(port: int) -> Color:
@@ -643,6 +650,8 @@ func _aim(origin: Vector3, forward: Vector3, target: Vector3) -> float:
 # ------------------------------------------------------------------ geometry
 
 func _cable_mesh() -> ArrayMesh:
+	if "--nocables" in OS.get_cmdline_user_args():
+		return null
 	## Rebuilt only when the patching changes (docs/10: cables are procedural geometry,
 	## not a node per cord). One mesh for the hall, coloured per vertex.
 	var links: PackedInt32Array = _bridge.LiveLinks()
@@ -683,15 +692,13 @@ func _ghost_mesh() -> ArrayMesh:
 		var loose := PackedVector3Array()
 		_step(loose, _port_pos[_held])
 		var normal := _clip_out[_held_route[0]]
-		var bypass: Vector3 = _clip_pos[_held_route[0]] + normal * 0.055
 		var enter: Vector3 = _clip_pos[_held_route[0]] + normal * lane
-		_step(loose, _onto(_port_pos[_held], bypass, normal))
-		_step(loose, _onto(Vector3(enter.x, _port_pos[_held].y, enter.z), bypass, normal))
+		_step(loose, _onto(_port_pos[_held], enter, normal))
 		_step(loose, Vector3(enter.x, _port_pos[_held].y, enter.z))
 		for clip in _held_route:
 			_step(loose, _clip_pos[clip] + _clip_out[clip] * lane)
 		_step(loose, camera.global_position + (-camera.global_transform.basis.z) * 0.5)
-		points = _smooth(_chamfer(loose, 0.022))
+		points = _smooth(_chamfer(loose, 0.010))
 
 	_tube(st, points, COLOUR["held"])
 	st.generate_normals()
@@ -717,27 +724,25 @@ func _cable_points(from_port: int, to_port: int,
 	var leave: Vector3 = _clip_pos[clips[clips.size() - 1]] \
 		+ _clip_out[clips[clips.size() - 1]] * lane
 
-	# Out of the socket, out past the front of the duct, sideways at the socket's own
-	# height, then into the gap. Every leg is square to the last.
+	# Out of the socket, straight back to the depth the duct sits at, sideways at the
+	# socket's own height, and into the gap. Every leg is square to the last.
 	#
-	# The sideways leg has to clear the duct, not pass through it: the gaps sit behind
-	# the duct's back plate, so a cord that goes straight from a gap to a PDU outlet
-	# runs through the plate. That is what was disappearing into the geometry.
+	# Everything happens at the duct's depth. Earlier versions ran the sideways legs
+	# further back, past the front of the duct, and at that depth they go through the
+	# 60 mm corner posts — which is what was vanishing into the geometry.
 	var normal := _clip_out[clips[0]]
-	var bypass: Vector3 = _clip_pos[clips[0]] + normal * 0.055
+	var run: Vector3 = enter
 
 	var points := PackedVector3Array()
 	_step(points, from)
-	_step(points, _onto(from, bypass, normal))
-	_step(points, _onto(Vector3(enter.x, from.y, enter.z), bypass, normal))
+	_step(points, _onto(from, run, normal))
 	_step(points, Vector3(enter.x, from.y, enter.z))
 	for clip in clips:
 		_step(points, _clip_pos[clip] + _clip_out[clip] * lane)
 	_step(points, Vector3(leave.x, to.y, leave.z))
-	_step(points, _onto(Vector3(leave.x, to.y, leave.z), bypass, normal))
-	_step(points, _onto(to, bypass, normal))
+	_step(points, _onto(to, run, normal))
 	_step(points, to)
-	return _smooth(_chamfer(points, 0.018))
+	return _smooth(_chamfer(points, 0.012))
 
 
 func _onto(point: Vector3, plane: Vector3, normal: Vector3) -> Vector3:
@@ -754,8 +759,12 @@ func _step(points: PackedVector3Array, at: Vector3) -> void:
 
 
 func _lane(port: int) -> float:
-	# cords sharing a gap are spread across its depth, or a full duct is a solid slab
-	return 0.010 + ((port * 7) % 7) * CLIP_SPREAD
+	# How deep inside the gap a cord sits. Kept small: the dip into the duct and back
+	# out is a visible zigzag, and a deep one loops around the finger.
+	return 0.004 + (port % 6) * 0.005
+
+
+
 
 
 func _chamfer(points: PackedVector3Array, radius: float) -> PackedVector3Array:
@@ -829,17 +838,50 @@ func _bezier(a: Vector3, b: Vector3, c: Vector3, d: Vector3, t: float) -> Vector
 func _tube(st: SurfaceTool, points: PackedVector3Array, colour: Color) -> void:
 	## Square section: four sides read as round at cable thickness and cost a third of
 	## what a real ring does, across a hall full of cords.
+	##
+	## The frame is carried along the curve rather than rebuilt from the world up at
+	## each point. Rebuilt, it flips where the run turns from vertical to horizontal —
+	## the section twists inside out and throws a long spike off the cable, which is
+	## what those shards along the ducts were.
+	points = _dedupe(points)
+	if points.size() < 2:
+		return
+
+	if "--cablecheck" in OS.get_cmdline_user_args():
+		for i in points.size():
+			var p: Vector3 = points[i]
+			if not (is_finite(p.x) and is_finite(p.y) and is_finite(p.z)):
+				push_warning("cable point %d is not finite: %v" % [i, p])
+			elif p.length() > 60.0:
+				push_warning("cable point %d is far away: %v" % [i, p])
+			elif i > 0 and points[i - 1].distance_to(p) > 0.35:
+				push_warning("cable leg %.2f m from %v to %v" % [
+					points[i - 1].distance_to(p), points[i - 1], p])
+		for i in range(1, points.size() - 1):
+			var d1: Vector3 = (points[i] - points[i - 1]).normalized()
+			var d2: Vector3 = (points[i + 1] - points[i]).normalized()
+			if d1.dot(d2) < -0.3:
+				push_warning("cable reverses at %v (dot %.2f) in a run of %d" % [
+					points[i], d1.dot(d2), points.size()])
+
 	var sides := 4
 	var rings: Array[PackedVector3Array] = []
+	var right := Vector3.ZERO
 	for i in points.size():
 		var ahead: Vector3 = points[mini(i + 1, points.size() - 1)]
 		var behind: Vector3 = points[maxi(i - 1, 0)]
 		var dir := (ahead - behind).normalized()
 		if dir.length_squared() < 0.5:
-			dir = Vector3.FORWARD
-		var right := dir.cross(Vector3.UP)
-		if right.length_squared() < 1e-6:
-			right = Vector3.RIGHT
+			dir = (points[points.size() - 1] - points[0]).normalized()
+			if dir.length_squared() < 0.5:
+				dir = Vector3.FORWARD
+
+		# keep as much of the previous frame as is still perpendicular
+		right = right - dir * right.dot(dir)
+		if right.length_squared() < 1e-8:
+			right = dir.cross(Vector3.UP)
+			if right.length_squared() < 1e-8:
+				right = Vector3.RIGHT
 		right = right.normalized()
 		var up := right.cross(dir).normalized()
 
@@ -850,9 +892,25 @@ func _tube(st: SurfaceTool, points: PackedVector3Array, colour: Color) -> void:
 		rings.append(ring)
 
 	for i in rings.size() - 1:
+		# A run that doubles back has no continuous section through the turn; carrying
+		# one across it is what threw metre-long shards off the cable. Skip the joint.
+		var d1: Vector3 = (points[i] - points[maxi(i - 1, 0)]).normalized()
+		var d2: Vector3 = (points[i + 1] - points[i]).normalized()
+		if i > 0 and d1.dot(d2) < -0.3:
+			continue
 		for s in sides:
 			var n := (s + 1) % sides
 			_quad(st, rings[i][s], rings[i][n], rings[i + 1][n], rings[i + 1][s], colour)
+
+
+func _dedupe(points: PackedVector3Array) -> PackedVector3Array:
+	## Chamfering and smoothing both leave near-coincident points behind, and a zero
+	## length segment has no direction to build a section from.
+	var out := PackedVector3Array()
+	for p in points:
+		if out.is_empty() or out[out.size() - 1].distance_to(p) > 0.001:
+			out.append(p)
+	return out
 
 
 func _quad(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, d: Vector3,
@@ -916,6 +974,15 @@ func _flat_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.vertex_color_use_as_albedo = true
+	return mat
+
+
+func _part_material() -> StandardMaterial3D:
+	## Lit, unlike the markers: a clip is a moulded part and its shape has to read.
+	## Unshaded turned it into a flat silhouette, which is what looked like a square.
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness = 0.55
 	return mat
 
 

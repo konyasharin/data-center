@@ -43,6 +43,13 @@ const SHED_ORIGIN := Vector3(0, 0, 16.0)
 
 var _label_font: Font
 var _cabling := CablingBridge.new()
+var _estate := EstateBridge.new()
+var _laptop: Laptop
+var _crew: Crew
+# Racks in the shed that have room left, and the floor spots a bought cabinet stands
+# on. Both are what the shop offers and what a worker is sent to.
+var _bays: Array[Dictionary] = []
+var _spots: Array[Dictionary] = []
 var _doors: Array[Dictionary] = []
 var _wiring: Wiring
 var _hud_label: Label
@@ -59,6 +66,7 @@ func _ready() -> void:
 	_prewire()
 	_catalogue()
 	_people()
+	_shift()
 	_hud()
 
 	if "--matte" in OS.get_cmdline_user_args():
@@ -82,6 +90,20 @@ func _ready() -> void:
 		get_tree().quit()
 		return
 
+	if "--order" in OS.get_cmdline_user_args():
+		# one of each, left for the crew to walk over and do: what the laptop would
+		# have queued, without a hand on the mouse
+		for kind in [0, 1]:
+			var spots := free_spots(kind)
+			if not spots.is_empty():
+				print("заказано %d -> работа %d"
+					% [kind, order(kind, spots[0]["place"], spots[0]["slot"])])
+
+	if "--shop" in OS.get_cmdline_user_args():
+		_check_shop()
+		get_tree().quit()
+		return
+
 	if "--fitpattern" in OS.get_cmdline_user_args():
 		_wiring.check_fit()
 		get_tree().quit()
@@ -98,6 +120,8 @@ func _ready() -> void:
 	var player := ShowroomPlayer.new()
 	player.position = Vector3(3.4, PLENUM + 0.1, 0.0)
 	add_child(player)
+	if _laptop != null:
+		_laptop.attach_player(player)
 
 
 const SHOTS := [
@@ -280,11 +304,19 @@ func _shoot() -> void:
 			var at: Vector3 = found[0] + found[1] * 0.09
 			shots.append(["plug_%d" % nth, at, found[0]])
 
+	if _laptop != null:
+		var pose := _laptop.seat_pose()
+		if not pose.is_empty():
+			shots.append(["laptop_desktop", pose[0], pose[1], ""])
+			shots.append(["laptop_shop", pose[0], pose[1], "shop"])
+
 	var dir := "user://shots"
 	DirAccess.make_dir_recursive_absolute(dir)
 	for shot in shots:
 		camera.position = shot[1]
 		camera.look_at(shot[2], Vector3.UP)
+		if shot.size() > 3 and _laptop != null:
+			_laptop.show_app(shot[3])
 		# a few frames so SSAO, SSR and the light probes settle before the grab
 		for i in 12:
 			await RenderingServer.frame_post_draw
@@ -585,7 +617,7 @@ func _fittings(root: Node3D, entry: Dictionary, strips_per_feed: int) -> void:
 	_fill(spines, spine_tf)
 
 
-func _populate(root: Node3D, index: int, entry: Dictionary) -> void:
+func _populate(root: Node3D, index: int, entry: Dictionary, fill_override := -1) -> Dictionary:
 	## One MultiMesh per rack: a hall of 8400 chassis cannot be 8400 nodes.
 	# Chassis LED pips are 4 mm: past a few metres they are sub-pixel and crawl as the
 	# camera moves. Visibility ranges swap in the LOD mesh, which is the L0/L1 split
@@ -618,7 +650,8 @@ func _populate(root: Node3D, index: int, entry: Dictionary) -> void:
 
 	var face_z := RACK_FRONT_Z - CHASSIS_INSET
 	# what 48 outlets can actually feed, two inlets each, is where this stops
-	var fill: int = [22, 18, 24, 16, 24, 14][index % 6]
+	var fill: int = ([22, 18, 24, 16, 24, 14][index % 6] if fill_override < 0
+		else fill_override)
 	var slot := 1
 	while slot < 41:
 		var y := PLINTH + slot * U + 0.001
@@ -681,6 +714,12 @@ func _populate(root: Node3D, index: int, entry: Dictionary) -> void:
 	_fill(patch, patch_tf)
 	_fill(switches, switch_tf)
 	_fill(managers, manager_tf)
+	return {
+		"root": root, "entry": entry, "face_z": face_z,
+		"servers": servers, "servers_far": servers_far, "blanks": blanks,
+		"server_tf": server_tf, "blank_tf": blank_tf,
+		"free": PackedInt32Array(),
+	}
 
 
 # --------------------------------------------------------------------- shed
@@ -716,7 +755,7 @@ func _shed() -> void:
 		var entry: Dictionary = _wiring.rack(SHED_RACK + i,
 			Transform3D(Basis(), rack.position + SHED_ORIGIN))
 		_fittings(rack, entry, 1)
-		_populate(rack, i, entry)
+		_open_bay(_populate(rack, i, entry), rack.position + SHED_ORIGIN)
 
 	_place(shed, "furniture/desk", Vector3(2.0, 0, 1.2), PI * 0.5)
 	_place(shed, "terminal/laptop_base", Vector3(2.0, 0.74, 1.2), PI * 0.5)
@@ -724,6 +763,9 @@ func _shed() -> void:
 	lid.rotate_object_local(Vector3.RIGHT, deg_to_rad(-18))
 	var display := _place(shed, "terminal/laptop_display", Vector3(2.0, 0.74, 1.2), PI * 0.5)
 	display.rotate_object_local(Vector3.RIGHT, deg_to_rad(-18))
+	_laptop = Laptop.new()
+	add_child(_laptop)
+	_laptop.setup(display, _estate, self)
 
 	_place(shed, "furniture/shelf", Vector3(-2.9, 0, 0.4), PI * 0.5)
 	_place(shed, "props/box_large", Vector3(-2.75, 0.49, 0.1), 0.3)
@@ -753,6 +795,17 @@ func _shed() -> void:
 		add_child(light)
 
 	_place(self, "cooling/ac_outdoor", SHED_ORIGIN + Vector3(4.4, 0, 1.0), -PI * 0.5)
+
+	# Two marked places for cabinets, continuing the row the three standing ones make.
+	# The shop has to be able to say where a purchase lands before it is paid for, and
+	# the room has to show the same answer.
+	for i in 2:
+		var at := Vector3(-1.6 + (3 + i) * 0.62, 0, 1.6)
+		_spots.append({
+			"at": at + SHED_ORIGIN, "taken": false, "index": _spots.size(),
+			"mark": _floor_mark(shed, at),
+			"sign": _sign(shed, at + Vector3(0, 0.9, 0), "МЕСТО ПОД ШКАФ"),
+		})
 
 
 # ---------------------------------------------------------------- catalogue
@@ -840,6 +893,50 @@ func _catalogue() -> void:
 
 # ------------------------------------------------------------------- people
 
+func _check_shop() -> void:
+	## --shop: buy one of everything the catalogue offers, finish the work the way a
+	## worker would, and read the room back. Buying is the one path where money, the
+	## job queue, the cabling core and three MultiMeshes all have to agree, and none
+	## of that is visible in a screenshot until it is already wrong.
+	print("shop: счёт %d, мест под сервер %d, под шкаф %d" % [
+		_estate.Balance(), free_spots(0).size(), free_spots(1).size()])
+	var servers: int = _wiring.racks().reduce(
+		func(n, entry): return n + entry["servers"].size(), 0)
+
+	for kind in [0, 1]:
+		var spots := free_spots(kind)
+		if spots.is_empty():
+			print("   некуда ставить, вид %d" % kind)
+			continue
+		var spot: Dictionary = spots[0]
+		var job: int = order(kind, spot["place"], spot["slot"])
+		print("   куплено %d -> работа %d, осталось мест: %d, счёт %d"
+			% [kind, job, free_spots(kind).size(), _estate.Balance()])
+		if job < 0:
+			continue
+		print("   идти к %v" % job_site(job))
+		_estate.Claim(0)
+		while not _estate.Advance(job, 5.0):
+			pass
+		job_done(job)
+
+	var after: int = _wiring.racks().reduce(
+		func(n, entry): return n + entry["servers"].size(), 0)
+	print("shop: серверов было %d, стало %d; стоек %d; очередь %d, сделано %d" % [
+		servers, after, _wiring.racks().size(), _estate.JobsQueued(), _estate.JobsDone()])
+
+
+func _shift() -> void:
+	## The two on duty, as opposed to the five standing around for the asset shots.
+	## They wait by the shed door and go wherever the queue sends them.
+	_crew = Crew.new()
+	add_child(_crew)
+	_crew.setup(_estate, self, [
+		SHED_ORIGIN + Vector3(0.9, 0, -1.4),
+		SHED_ORIGIN + Vector3(1.7, 0, -1.4),
+	])
+
+
 func _people() -> void:
 	var poses := [
 		[Vector3(1.9, PLENUM, 0.1), deg_to_rad(90), "walk"],
@@ -885,6 +982,181 @@ func _find_player(root: Node) -> AnimationPlayer:
 	return null
 
 
+# ------------------------------------------------------------- места и покупки
+
+## Everything the laptop is allowed to know about the room. The screen asks what is
+## free and orders work; it never places anything itself, because a shop that could
+## would be a second place where the world is built.
+
+const BAY_U := 3               # free rack units offered per cabinet in the shed
+const BUILD_U := 8             # and in one bought new, which comes in empty
+
+
+func _open_bay(bay: Dictionary, at: Vector3) -> void:
+	## Free units are the ones right above the last server, not any gap in the
+	## cabinet: hardware is racked upwards from the bottom, and offering a hole in the
+	## middle of a filled rack is offering to make it look wrong.
+	bay["at"] = at
+	var top := 0
+	for tf in bay["server_tf"]:
+		top = maxi(top, int(roundf((tf.origin.y - PLINTH - 0.001) / U)))
+	var want: int = BUILD_U if bay["server_tf"].is_empty() else BAY_U
+	var free := PackedInt32Array()
+	for slot in range(top + 1, 36):
+		if free.size() >= want:
+			break
+		free.append(slot)
+	bay["free"] = free
+	# An open U reads as free at a glance; a blanking panel over it does not. The
+	# panels at those slots are dropped rather than marked.
+	for slot in free:
+		_drop_blank(bay, slot)
+	_fill(bay["blanks"], bay["blank_tf"])
+	_bays.append(bay)
+	if not free.is_empty():
+		_sign(bay["root"], Vector3(0, PLINTH + (free[0] + free.size() * 0.5) * U,
+			RACK_FRONT_Z + 0.06), "%dU СВОБОДНО" % free.size())
+
+
+func free_spots(kind: int) -> Array:
+	## kind mirrors ItemKind in sim/Estate/Catalogue.cs: 0 a server, 1 a cabinet.
+	var out := []
+	if kind == 1:
+		for spot in _spots:
+			if not spot["taken"]:
+				out.append({"place": spot["index"], "slot": 0,
+					"label": "место %d в сарае" % (spot["index"] + 1)})
+		return out
+	for i in _bays.size():
+		var bay: Dictionary = _bays[i]
+		for slot in bay["free"]:
+			out.append({"place": i, "slot": slot,
+				"label": "шкаф %d, %dU" % [int(bay["entry"]["index"]) - SHED_RACK + 1, slot]})
+	return out
+
+
+func order(item: int, place: int, slot: int) -> int:
+	var job: int = _estate.Buy(item, place, slot)
+	if job < 0:
+		return -1
+	# Held the moment it is paid for, not when the worker arrives: the shop must not
+	# offer the same shelf to two purchases while the first is still being carried in.
+	if _estate.JobKindOf(job) == 1:
+		_spots[place]["taken"] = true
+	else:
+		var free: PackedInt32Array = _bays[place]["free"]
+		var at := free.find(slot)
+		if at >= 0:
+			free.remove_at(at)
+			_bays[place]["free"] = free
+	return job
+
+
+func job_site(job: int) -> Vector3:
+	## Where a worker stands to do it: in front of the cabinet, an arm's length off.
+	var place: int = _estate.JobPlaceOf(job)
+	if _estate.JobKindOf(job) == 1:
+		return _spots[place]["at"] + Vector3(0, 0, RACK_D * 0.5 + 0.55)
+	return _bays[place]["at"] + Vector3(0, 0, RACK_FRONT_Z + 0.55)
+
+
+func job_facing(job: int) -> Vector3:
+	return Vector3(0, 0, -1)
+
+
+func job_done(job: int) -> void:
+	var place: int = _estate.JobPlaceOf(job)
+	print("работа %d выполнена: вид %d, место %d, %dU"
+		% [job, _estate.JobKindOf(job), place, _estate.JobSlotOf(job)])
+	if _estate.JobKindOf(job) == 1:
+		_raise_rack(place)
+	else:
+		_rack_server(place, _estate.JobSlotOf(job))
+	_wiring.grew()
+
+
+func _rack_server(place: int, slot: int) -> void:
+	var bay: Dictionary = _bays[place]
+	var y := PLINTH + slot * U + 0.001
+	var at := Vector3(0, y, bay["face_z"])
+	bay["server_tf"].append(Transform3D(Basis(), at))
+	_fill(bay["servers"], bay["server_tf"])
+	_fill(bay["servers_far"], bay["server_tf"])
+	# add_server appends, so the rack's server list stays in height order only while
+	# the free units are the ones above the last box — which is what _open_bay hands out
+	var device: int = _wiring.add_server(bay["entry"], at, U, 0.75)
+	_wiring.grew()
+	_wiring.wire_server(bay["entry"], device)
+
+
+func _raise_rack(place: int) -> void:
+	var spot: Dictionary = _spots[place]
+	var root := Node3D.new()
+	root.position = spot["at"]
+	add_child(root)
+	root.add_child(Assets.instance("hardware/rack_42u_frame"))
+	var front := Assets.instance("hardware/rack_42u_door_front")
+	front.position = Vector3(-RACK_W / 2, 0.01, RACK_FRONT_Z + 0.004)
+	root.add_child(front)
+
+	var entry: Dictionary = _wiring.rack(SHED_RACK + 10 + place,
+		Transform3D(Basis(), spot["at"]))
+	_fittings(root, entry, 1)
+	# A cabinet arrives empty. What goes in it is the next thing bought, which is the
+	# whole point of it standing there.
+	_open_bay(_populate(root, 0, entry, 0), spot["at"])
+	if is_instance_valid(spot["mark"]):
+		spot["mark"].queue_free()
+	if is_instance_valid(spot["sign"]):
+		spot["sign"].queue_free()
+
+
+func _drop_blank(bay: Dictionary, slot: int) -> void:
+	var y := PLINTH + slot * U + 0.001 + U * 0.5
+	var panels: Array[Transform3D] = bay["blank_tf"]
+	for i in panels.size():
+		if absf(panels[i].origin.y - y) < U * 0.4:
+			panels.remove_at(i)
+			return
+
+
+func _floor_mark(parent: Node3D, at: Vector3) -> Node3D:
+	## A painted outline on the floor. Four thin quads rather than a textured plane:
+	## the palette atlas has no decals, and an outline is what a real floor gets.
+	var mark := Node3D.new()
+	mark.position = at + Vector3(0, 0.004, 0)
+	parent.add_child(mark)
+	var paint := StandardMaterial3D.new()
+	paint.albedo_color = Color(0.95, 0.72, 0.14)
+	paint.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var half := Vector2(RACK_W * 0.5, RACK_D * 0.5)
+	for side in 4:
+		var bar := MeshInstance3D.new()
+		var plane := PlaneMesh.new()
+		var along := side < 2
+		plane.size = Vector2(half.x * 2.0 if along else 0.03,
+			0.03 if along else half.y * 2.0)
+		bar.mesh = plane
+		bar.material_override = paint
+		bar.position = Vector3(0 if along else half.x * (1 if side == 2 else -1), 0,
+			half.y * (1 if side == 0 else -1) if along else 0)
+		mark.add_child(bar)
+	return mark
+
+
+func _sign(parent: Node3D, at: Vector3, text: String) -> Label3D:
+	var label := Label3D.new()
+	label.text = text
+	label.fixed_size = true
+	label.font_size = 48
+	label.pixel_size = 0.0004
+	label.modulate = Color(0.95, 0.72, 0.14)
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.position = at
+	parent.add_child(label)
+	return label
+
+
 # ---------------------------------------------------------------------- hud
 
 func _prewire() -> void:
@@ -906,6 +1178,11 @@ func _prewire() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_E:
+		# the laptop gets first refusal: standing at the desk, E sits down; standing at
+		# a cabinet it still opens the door
+		if _laptop != null and _laptop.try_open():
+			return
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_E:
@@ -980,6 +1257,13 @@ func _process(_delta: float) -> void:
 		+ "   [" + _build_stamp() + "]"
 		+ "\n" + _unwired_hint()
 		+ "\n" + _wiring.hud_text())
+	# The laptop takes the screen over while it is open, so its line replaces the
+	# patching one rather than sitting under it
+	var at_desk: String = _laptop.prompt() if _laptop != null else ""
+	if _laptop != null and _laptop.is_open():
+		text = at_desk
+	elif not at_desk.is_empty():
+		text += "\n" + at_desk
 	if text != _hud_label.text:
 		_hud_label.text = text
 

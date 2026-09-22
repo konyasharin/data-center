@@ -41,7 +41,6 @@ public static class RackWiring
 
 		for (int i = 0; i < servers.Length; i++)
 		{
-			int server = servers[i];
 			bool slip = mistakeIn > 0 && NextBelow(ref rng, (uint)mistakeIn) == 0;
 			int slipKind = slip ? (int)NextBelow(ref rng, 3) : -1;
 			if (slip)
@@ -49,75 +48,103 @@ public static class RackWiring
 				mistakes++;
 			}
 
-			// The left inlet always takes feed A and the right one feed B. Alternating
-			// them per server is just as redundant and reads as a mistake: the two
-			// cords leaving a server cross, and the pair of ducts fills with cords
-			// arriving from opposite inlets.
-			ReadOnlySpan<int> first = feedA;
-			ReadOnlySpan<int> second = feedB;
-			if (slipKind == 1)
-			{
-				second = first;   // both inlets on one feed: works until that feed drops
-			}
-
-			int madeHere = 0;
-			int inlets = slipKind == 0 ? 1 : 2;
-			for (int inlet = 0; inlet < inlets; inlet++)
-			{
-				ReadOnlySpan<int> target = inlet == 0 ? first : second;
-				int serverPort = state.FindFreePort(server, LineKind.Power);
-				int pduPort = FreePortIn(state, target, LineKind.Power, i);
-				if (serverPort < 0 || pduPort < 0)
-				{
-					shortOfPorts++;
-					continue;
-				}
-				if (state.Connect(serverPort, pduPort, out _) == ConnectResult.Ok)
-				{
-					power++;
-					madeHere++;
-				}
-				else
-				{
-					refused++;
-				}
-			}
-
-			if (slipKind != 2)
-			{
-				// The rack is split down the middle: the lower servers climb one duct
-				// and take the switch from one end, the upper ones climb the other and
-				// take it from the other end. One duct carrying every network cord is
-				// a stuffed bundle beside an empty channel, and half of those cords
-				// then cross the whole panel to reach their socket.
-				bool lower = i < servers.Length / 2;
-				int serverPort = state.FindFreePort(server, LineKind.Network);
-				int switchPort = UplinkPort(state, uplinks,
-					lower ? i : i - servers.Length / 2, lower);
-				if (serverPort < 0 || switchPort < 0)
-				{
-					shortOfPorts++;
-				}
-				else if (state.Connect(serverPort, switchPort, out _) == ConnectResult.Ok)
-				{
-					network++;
-					madeHere++;
-				}
-				else
-				{
-					refused++;
-				}
-			}
-
+			ServerWiring made = WireOne(state, servers, i, feedA, feedB, uplinks, slipKind);
+			power += made.Power;
+			network += made.Network;
+			shortOfPorts += made.Short;
+			refused += made.Refused;
 			// A server nothing could be attached to is not a wired server. Counting it
 			// as one let a report say "all 20 done" for a rack with no outlets left.
-			if (madeHere > 0)
+			if (made.Power + made.Network > 0)
 			{
 				wired++;
 			}
 		}
 
 		return new WiringReport(wired, power, network, mistakes, shortOfPorts, refused);
+	}
+
+	/// <summary>One server, patched by the same rules as a whole rack. This is what a
+	/// technician racking a single box does, and it has to agree with the rack pass
+	/// exactly — where a server's cords go depends on where it sits among its
+	/// neighbours, so `index` is its place in the rack and not a loop counter.</summary>
+	public static WiringReport WireServer(CablingState state, ReadOnlySpan<int> servers,
+		int index, ReadOnlySpan<int> feedA, ReadOnlySpan<int> feedB,
+		ReadOnlySpan<int> uplinks)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(index);
+		ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, servers.Length);
+
+		ServerWiring made = WireOne(state, servers, index, feedA, feedB, uplinks, -1);
+		return new WiringReport(made.Power + made.Network > 0 ? 1 : 0, made.Power,
+			made.Network, 0, made.Short, made.Refused);
+	}
+
+	private readonly record struct ServerWiring(int Power, int Network, int Short, int Refused);
+
+	/// <param name="slipKind">-1 for a clean job; 0 leaves one inlet unplugged, 1 puts
+	/// both on the same feed, 2 forgets the network.</param>
+	private static ServerWiring WireOne(CablingState state, ReadOnlySpan<int> servers,
+		int i, ReadOnlySpan<int> feedA, ReadOnlySpan<int> feedB, ReadOnlySpan<int> uplinks,
+		int slipKind)
+	{
+		int server = servers[i];
+		int power = 0, network = 0, shortOfPorts = 0, refused = 0;
+
+		// The left inlet always takes feed A and the right one feed B. Alternating
+		// them per server is just as redundant and reads as a mistake: the two cords
+		// leaving a server cross, and the pair of ducts fills with cords arriving from
+		// opposite inlets.
+		ReadOnlySpan<int> first = feedA;
+		ReadOnlySpan<int> second = slipKind == 1 ? feedA : feedB;
+
+		int inlets = slipKind == 0 ? 1 : 2;
+		for (int inlet = 0; inlet < inlets; inlet++)
+		{
+			ReadOnlySpan<int> target = inlet == 0 ? first : second;
+			int serverPort = state.FindFreePort(server, LineKind.Power);
+			int pduPort = FreePortIn(state, target, LineKind.Power, i);
+			if (serverPort < 0 || pduPort < 0)
+			{
+				shortOfPorts++;
+				continue;
+			}
+			if (state.Connect(serverPort, pduPort, out _) == ConnectResult.Ok)
+			{
+				power++;
+			}
+			else
+			{
+				refused++;
+			}
+		}
+
+		if (slipKind != 2)
+		{
+			// The rack is split down the middle: the lower servers climb one duct and
+			// take the switch from one end, the upper ones climb the other and take it
+			// from the other end. One duct carrying every network cord is a stuffed
+			// bundle beside an empty channel, and half of those cords then cross the
+			// whole panel to reach their socket.
+			bool lower = i < servers.Length / 2;
+			int serverPort = state.FindFreePort(server, LineKind.Network);
+			int switchPort = UplinkPort(state, uplinks,
+				lower ? i : i - servers.Length / 2, lower);
+			if (serverPort < 0 || switchPort < 0)
+			{
+				shortOfPorts++;
+			}
+			else if (state.Connect(serverPort, switchPort, out _) == ConnectResult.Ok)
+			{
+				network++;
+			}
+			else
+			{
+				refused++;
+			}
+		}
+
+		return new ServerWiring(power, network, shortOfPorts, refused);
 	}
 
 	/// <param name="nth">Which socket to start looking at. Both sides are ordered the

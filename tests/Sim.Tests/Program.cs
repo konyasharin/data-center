@@ -1,4 +1,6 @@
 using DataCenter.Sim.Cabling;
+using DataCenter.Sim.Estate;
+using DataCenter.Sim.Work;
 
 namespace DataCenter.Sim.Tests;
 
@@ -31,10 +33,12 @@ internal static class Program
 		WiringIsRepeatable();
 		StaleIdsAreRejected();
 		MaintenanceOnFeedA();
+		BuyingChargesOnceAndRefusesWhenShort();
+		JobsAreClaimedOnceAndFinishOnce();
 
 		Console.WriteLine(_failures == 0
-			? "\ncabling: all checks passed"
-			: $"\ncabling: {_failures} FAILED");
+			? "\nsim: all checks passed"
+			: $"\nsim: {_failures} FAILED");
 		return _failures == 0 ? 0 : 1;
 	}
 
@@ -371,6 +375,58 @@ internal static class Program
 	}
 
 	// ---------------------------------------------------------------- harness
+
+	private static void BuyingChargesOnceAndRefusesWhenShort()
+	{
+		int server = Catalogue.IndexOf("server_1u");
+		Check("the catalogue knows the server", server >= 0);
+		Check("and not something that is not in it", Catalogue.IndexOf("nope") < 0);
+		Check("an index past the end throws", Throws(() => Catalogue.At(Catalogue.Count)));
+
+		long price = Catalogue.At(server).Price;
+		Ledger money = new(price + 10);
+		Check("it is affordable", money.CanAfford(price));
+		Check("the charge goes through", money.Spend(price));
+		Check("and comes off the balance", money.Balance == 10);
+		Check("the second one is refused", !money.Spend(price));
+		Check("a refused charge costs nothing", money.Balance == 10 && money.Spent == price);
+		money.Earn(price);
+		Check("earning puts it back", money.Balance == price + 10);
+		Check("a negative opening balance throws", Throws(() => new Ledger(-1)));
+	}
+
+	private static void JobsAreClaimedOnceAndFinishOnce()
+	{
+		JobQueue jobs = new();
+		int first = jobs.Add(JobKind.InstallServer, place: 3, slot: 7, seconds: 4f);
+		int second = jobs.Add(JobKind.InstallRack, place: 1, slot: 0, seconds: 2f);
+
+		Check("a new job is queued", jobs.StateOf(first) == JobState.Queued);
+		Check("the oldest one is claimed first", jobs.Claim(worker: 0) == first);
+		Check("and not again", jobs.Claim(worker: 1) == second);
+		Check("nothing is left to claim", jobs.Claim(worker: 2) < 0);
+
+		Check("half the work is not finished", !jobs.Advance(first, 2f));
+		Check("and reads as half done", Math.Abs(jobs.ProgressOf(first) - 0.5f) < 0.001f);
+		Check("the rest finishes it", jobs.Advance(first, 2f));
+		Check("finishing twice does not happen", !jobs.Advance(first, 10f));
+		Check("a long tick does not overshoot",
+			jobs.Advance(second, 90f) && jobs.LeftOf(second) == 0f);
+
+		Check("both are done", jobs.CountIn(JobState.Done) == 2);
+		Check("a released job is claimable again", Release(jobs));
+		Check("a job id past the end throws", Throws(() => jobs.StateOf(jobs.Count)));
+		Check("work that takes no time throws",
+			Throws(() => jobs.Add(JobKind.InstallRack, 0, 0, 0f)));
+	}
+
+	private static bool Release(JobQueue jobs)
+	{
+		int job = jobs.Add(JobKind.InstallRack, 2, 0, 1f);
+		jobs.Claim(worker: 0);
+		jobs.Release(job);
+		return jobs.StateOf(job) == JobState.Queued && jobs.Claim(worker: 1) == job;
+	}
 
 	private static int Count(CablingState s, int[] servers, Func<ServerStatus, bool> match)
 	{

@@ -71,8 +71,22 @@ def make_laptop_display():
 	"""Bare quad in the lid's local space; Godot swaps this material for a viewport."""
 	b = Builder()
 	w, h = 330 * MM - 26 * MM, 215 * MM - 26 * MM
-	b.box((w, 2 * MM, h), (0, -9 * MM, h / 2 + 11 * MM), "screen_on", bevel=0)
+	centre_z = h / 2 + 11 * MM
+	b.box((w, 2 * MM, h), (0, -9 * MM, centre_z), "screen_on", bevel=0)
 	obj = b.finish("laptop_display")
+
+	# The one surface in the library that does not take its colour from the atlas:
+	# Godot points it at a SubViewport, so the front face needs UVs spanning the panel
+	# instead of the single texel every other face gets. glTF flips V on export, which
+	# is why the up axis is written the way round it is here.
+	me = obj.data
+	uv = me.uv_layers.active.data
+	for poly in me.polygons:
+		if poly.normal.y > -0.99:
+			continue
+		for loop in poly.loop_indices:
+			co = me.vertices[me.loops[loop].vertex_index].co
+			uv[loop].uv = (co.x / w + 0.5, (co.z - centre_z) / h + 0.5)
 	mat = bpy.data.materials.new("terminal_screen")
 	mat.use_nodes = True
 	bsdf = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")

@@ -129,6 +129,19 @@ public partial class CablingBridge : RefCounted
 		return pairs;
 	}
 
+	/// <summary>Patch one server that was racked after the rest. `index` is where it
+	/// sits among its neighbours, which is what decides where its cords go.</summary>
+	public int[] WireServer(int[] servers, int index, int[] feedA, int[] feedB, int[] uplinks)
+	{
+		WiringReport report = RackWiring.WireServer(_state, servers, index, feedA, feedB,
+			uplinks);
+		return new[]
+		{
+			report.ServersWired, report.PowerLinks, report.NetworkLinks,
+			report.Mistakes, report.OutOfPorts, report.Refused,
+		};
+	}
+
 	/// <param name="report">wired, power, network, mistakes, out-of-ports, refused.</param>
 	public int[] WireRack(int[] servers, int[] feedA, int[] feedB, int[] uplinks,
 		int mistakeIn, int seed)

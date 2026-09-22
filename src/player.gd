@@ -15,6 +15,9 @@ const STAND_H := 1.75
 const CROUCH_H := 1.05
 
 @export var flying := false
+## Set while the player is using something in the world — at the laptop, the keys and
+## the mouse belong to that screen and not to walking around.
+var frozen := false
 
 var _camera: Camera3D
 var _shape: CollisionShape3D
@@ -42,6 +45,8 @@ func _ready() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if frozen:
+		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		rotate_y(-event.relative.x * MOUSE)
 		_pitch = clamp(_pitch - event.relative.y * MOUSE, -1.5, 1.5)
@@ -59,6 +64,9 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if frozen:
+		velocity = Vector3.ZERO
+		return
 	var input := Vector3(
 		float(Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_A)),
 		0.0,

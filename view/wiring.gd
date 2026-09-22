@@ -350,6 +350,42 @@ func build() -> void:
 
 # ------------------------------------------------------------------ actions
 
+func grew() -> void:
+	## Hardware racked after the hall was built. The pools are sized to the counts, so
+	## they are thrown away and made again rather than patched: the visual is a
+	## derivative of the data and is meant to be disposable (CLAUDE.md, rule 1).
+	_clips.multimesh = _instances(_clip_pos.size(), _clip_mesh())
+	for i in _clip_pos.size():
+		_clips.multimesh.set_instance_transform(i, _facing(_clip_pos[i], _clip_out[i]))
+	_status.multimesh = _instances(_servers.size(), _pip_mesh(0.0045))
+	for i in _servers.size():
+		_status.multimesh.set_instance_transform(i, _facing(_server_pos[i], _server_out[i]))
+	var cable_mat := _cable_material()
+	while _cables.size() < _racks.size():
+		var node := MeshInstance3D.new()
+		node.material_override = cable_mat
+		add_child(node)
+		_cables.append(node)
+	refresh()
+
+
+func wire_server(entry: Dictionary, device: int) -> int:
+	## Patch a single server, the way a technician does after racking one box. Returns
+	## how many cords it took; the routing is the rack's, not a second set of rules.
+	var index: int = Array(entry["servers"]).find(device)
+	if index < 0:
+		return 0
+	var first_link: int = _bridge.LinkCount()
+	var report: PackedInt32Array = _bridge.WireServer(entry["servers"], index,
+		entry["feed_a"], entry["feed_b"], entry["uplinks"])
+	for link in range(first_link, _bridge.LinkCount()):
+		if _bridge.LinkLive(link):
+			_dress(link, _auto_route(entry, _bridge.LinkPortA(link),
+				_bridge.OtherEnd(_bridge.LinkPortA(link))))
+	refresh(PackedInt32Array([entry["slot"]]))
+	return report[1] + report[2]
+
+
 func wire_rack(entry: Dictionary, mistake_in := 0, seed_value := 1, quiet := false) -> void:
 	var first_link: int = _bridge.LinkCount()
 	var report: PackedInt32Array = _bridge.WireRack(

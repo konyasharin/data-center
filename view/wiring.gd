@@ -123,9 +123,11 @@ var _routes := {}                      # link -> the clips a cord is dressed int
 var _pattern := PackedInt32Array()     # one rack's wiring, written down (see "pattern")
 var _pattern_rack := -1
 var _held_route := PackedInt32Array()
+var _locked := PackedInt32Array()      # racks a worker is currently inside
 
 # device bookkeeping the scene needs and the core does not
 var _servers := PackedInt32Array()
+var _stowed := PackedInt32Array()      # 1 while a chassis is out of its rack
 var _server_pos := PackedVector3Array()
 var _server_out := PackedVector3Array()
 var _racks: Array[Dictionary] = []
@@ -192,6 +194,7 @@ func add_server(entry: Dictionary, at: Vector3, height: float, depth: float) -> 
 
 	entry["servers"].append(device)
 	_servers.append(device)
+	_stowed.append(0)
 	_server_pos.append(entry["xform"] * _server_pip(at, height, depth))
 	_server_out.append(entry["xform"].basis * Vector3(0, 0, -1))
 	return device
@@ -214,9 +217,29 @@ func move_server(entry: Dictionary, device: int, at: Vector3, height: float,
 	if nth >= 0:
 		_server_pos[nth] = xform * _server_pip(at, height, depth)
 		_server_out[nth] = xform.basis * Vector3(0, 0, -1)
+		_status.multimesh.set_instance_transform(nth, _pip_at(nth))
 	if not Array(entry["servers"]).has(device):
 		entry["servers"].append(device)
 	_bridge.MoveDevice(device, entry["index"])
+
+
+func stow_server(device: int, away: bool) -> void:
+	## A chassis carried out of a cabinet takes its status light with it. Left behind,
+	## the pip sits in the middle of the empty unit and reads as a socket nobody can
+	## reach — which is exactly what it looked like.
+	var nth := Array(_servers).find(device)
+	if nth < 0:
+		return
+	_stowed[nth] = 1 if away else 0
+	_status.multimesh.set_instance_transform(nth, _pip_at(nth))
+
+
+func _pip_at(nth: int) -> Transform3D:
+	# Moved out of the world rather than scaled away: a MultiMesh does not keep a zero
+	# scale, it reads back as 1, and every pip in the hall came back.
+	if _stowed[nth] != 0:
+		return Transform3D(Basis(), Vector3(0, -1000.0, 0))
+	return _facing(_server_pos[nth], _server_out[nth])
 
 
 func unplug_device(device: int) -> int:
@@ -387,7 +410,7 @@ func build() -> void:
 	for i in _clip_pos.size():
 		_clips.multimesh.set_instance_transform(i, _facing(_clip_pos[i], _clip_out[i]))
 	for i in _servers.size():
-		_status.multimesh.set_instance_transform(i, _facing(_server_pos[i], _server_out[i]))
+		_status.multimesh.set_instance_transform(i, _pip_at(i))
 
 	refresh()
 
@@ -403,7 +426,7 @@ func grew() -> void:
 		_clips.multimesh.set_instance_transform(i, _facing(_clip_pos[i], _clip_out[i]))
 	_status.multimesh = _instances(_servers.size(), _pip_mesh(0.0045))
 	for i in _servers.size():
-		_status.multimesh.set_instance_transform(i, _facing(_server_pos[i], _server_out[i]))
+		_status.multimesh.set_instance_transform(i, _pip_at(i))
 	var cable_mat := _cable_material()
 	while _cables.size() < _racks.size():
 		var node := MeshInstance3D.new()
@@ -601,6 +624,36 @@ func is_bare(entry: Dictionary) -> bool:
 			if not _bridge.IsFree(_bridge.PortOf(server, i)):
 				return false
 	return true
+
+
+func spare_inlets(entry: Dictionary) -> int:
+	## How many more servers this cabinet can actually feed: the leaner of the two
+	## feeds, counting outlets nobody has taken. A unit with no outlet behind it is a
+	## unit that arrives dark.
+	var spare := 1 << 30
+	for feed in ["feed_a", "feed_b"]:
+		var free := 0
+		for device in entry[feed]:
+			for i in _bridge.PortCountOf(device):
+				var port: int = _bridge.PortOf(device, i)
+				if _port_line[port] == Line.POWER and _bridge.IsFree(port):
+					free += 1
+		spare = mini(spare, free)
+	return spare
+
+
+func lock_racks(racks: PackedInt32Array) -> void:
+	## Cabinets somebody is working in. Reaching past a technician to pull the cord he
+	## is holding is not a thing the player gets to do, and it is also the shortest way
+	## to two systems writing the same port in the same frame.
+	_locked = racks
+	if _held >= 0 and _is_locked(_held):
+		_drop_held()
+		refresh()
+
+
+func _is_locked(port: int) -> bool:
+	return _locked.has(int(_racks[_port_rack[port]]["index"]))
 
 
 func clear_message() -> void:
@@ -1299,6 +1352,8 @@ func _pick(camera: Camera3D) -> int:
 	# within arm's reach are worth walking
 	for entry in _racks:
 		if (entry["xform"].origin - origin).length() > REACH + 1.3:
+			continue
+		if _locked.has(int(entry["index"])):
 			continue
 		for port in range(entry["port_from"], entry["port_to"]):
 			# a socket turned away from the player is behind a closed door and half a

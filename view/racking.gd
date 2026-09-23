@@ -21,6 +21,7 @@ const EDGE := Color(0.98, 0.78, 0.22)
 const EDGE_TAKE := Color(0.40, 0.86, 0.58)
 
 var _wiring: Wiring
+var _site: Object
 var _bays: Array[Dictionary] = []
 var _eye: Camera3D
 var _edges: MeshInstance3D
@@ -32,8 +33,9 @@ var _aim := {}
 var _message := ""
 
 
-func setup(wiring: Wiring, bays: Array[Dictionary], eye: Camera3D) -> void:
+func setup(wiring: Wiring, site: Object, bays: Array[Dictionary], eye: Camera3D) -> void:
 	_wiring = wiring
+	_site = site
 	_bays = bays
 	_eye = eye
 
@@ -108,6 +110,8 @@ func _pick() -> Dictionary:
 	var front := {}
 	var front_at := REACH
 	for bay in _bays:
+		if _site.rack_busy(int(bay["entry"]["index"])):
+			continue
 		var xform: Transform3D = bay["at_xform"]
 		var inv := xform.affine_inverse()
 		var from := inv * origin
@@ -129,8 +133,11 @@ func _pick() -> Dictionary:
 
 func _unit(bay: Dictionary, slot: int, xform: Transform3D) -> Dictionary:
 	var y: float = 0.05 + slot * U + 0.001
-	var box := Transform3D(Basis().scaled(Vector3(0.44, U * 0.86, 0.74)),
-		Vector3(0.0, y + U * 0.5, bay["face_z"] - 0.375))
+	# The bezel, not the whole 750 mm box. Drawn through everything (a cabinet door
+	# stands in front of it) a full-depth outline puts its back edges low on the screen
+	# and over the units below, which reads as the wrong one being picked.
+	var box := Transform3D(Basis().scaled(Vector3(0.44, U * 0.86, 0.05)),
+		Vector3(0.0, y + U * 0.5, float(bay["face_z"]) - 0.02))
 	if _held >= 0:
 		if not PackedInt32Array(bay["free"]).has(slot):
 			return {}
@@ -170,6 +177,7 @@ func _take_out() -> void:
 	bay["server_dev"] = devices
 	_refill(bay)
 
+	_wiring.stow_server(device, true)
 	var pulled := _wiring.unplug_device(device)
 	_message = ("вынимаем сервер" if pulled == 0
 		else "вынимаем сервер, снято шнуров: %d" % pulled)
@@ -212,6 +220,7 @@ func _put_in() -> void:
 			bay["server_dev"] = devices
 			_refill(bay)
 			_wiring.move_server(bay["entry"], device, seat.origin, U, 0.75)
+			_wiring.stow_server(device, false)
 			_wiring.grew()
 			var free: PackedInt32Array = bay["free"]
 			var at := free.find(slot)

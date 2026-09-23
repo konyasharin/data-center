@@ -149,7 +149,7 @@ func _ready() -> void:
 		_laptop.attach_player(player)
 	_racking = Racking.new()
 	add_child(_racking)
-	_racking.setup(_wiring, _bays, player.eye())
+	_racking.setup(_wiring, self, _bays, player.eye())
 
 	if "--laptop" in OS.get_cmdline_user_args():
 		_check_laptop(player)
@@ -1063,6 +1063,23 @@ func _check_racking(player: ShowroomPlayer) -> void:
 	await get_tree().create_timer(Racking.SLIDE + 0.4).timeout
 	print("   вынул: %s, серверов %d, свободно %s"
 		% [_racking.report(), (bay["server_tf"] as Array).size(), bay["free"]])
+	await _snap("rack_empty_slot")
+
+	# a technician in the cabinet locks the player out of it
+	var room := free_spots(0)
+	if not room.is_empty():
+		var job := order(0, room[0]["place"], room[0]["slot"])
+		while _crew.at_job(job) == 0:
+			await get_tree().create_timer(0.2).timeout
+		# a free unit, so the only thing that can refuse it is the lock
+		await _look_at(eye, bay, 9)
+		print("   при работнике: занято %s, под прицелом %s"
+			% [rack_busy(int(bay["entry"]["index"])), _racking.report()])
+		while _estate.JobStateOf(job) != 2:
+			await get_tree().create_timer(0.3).timeout
+		await _look_at(eye, bay, 9)
+		print("   после работника: занято %s, под прицелом %s"
+			% [rack_busy(int(bay["entry"]["index"])), _racking.report()])
 
 	await _look_at(eye, bay, 7)
 	print("   навёлся на пустой: %s" % _racking.report())
@@ -1263,23 +1280,27 @@ func _shift() -> void:
 ## free and orders work; it never places anything itself, because a shop that could
 ## would be a second place where the world is built.
 
-const BAY_U := 3               # free rack units offered per cabinet in the shed
-const BUILD_U := 8             # and in one bought new, which comes in empty
+const TOP_U := 35              # the highest unit a server can take; 36+ is panels
 
 
 func _open_bay(bay: Dictionary, at: Vector3) -> void:
-	## Free units are the ones right above the last server, not any gap in the
-	## cabinet: hardware is racked upwards from the bottom, and offering a hole in the
-	## middle of a filled rack is offering to make it look wrong.
+	## Every unit above the last box, not a window of three. Hardware is racked upwards
+	## from the bottom, so a hole in the middle of a filled rack is still not offered —
+	## but a cabinet standing two-thirds empty with three units for sale reads as
+	## broken, because it is nearly all free and the shop said no.
+	##
+	## The ceiling is not the cabinet, it is the strips: one feed has twenty-four
+	## outlets and a server takes one from each, so a rack holds more boxes than it can
+	## power and offering the difference is offering to buy something that arrives
+	## dark.
 	bay["at"] = at
 	bay["at_xform"] = Transform3D(Basis(), at)
 	var top := 0
 	for tf in bay["server_tf"]:
 		top = maxi(top, int(roundf((tf.origin.y - PLINTH - 0.001) / U)))
-	var want: int = BUILD_U if bay["server_tf"].is_empty() else BAY_U
 	var free := PackedInt32Array()
-	for slot in range(top + 1, 36):
-		if free.size() >= want:
+	for slot in range(top + 1, TOP_U + 1):
+		if free.size() >= _wiring.spare_inlets(bay["entry"]):
 			break
 		free.append(slot)
 	bay["free"] = free
@@ -1292,6 +1313,27 @@ func _open_bay(bay: Dictionary, at: Vector3) -> void:
 	if not free.is_empty():
 		_sign(bay["root"], Vector3(0, PLINTH + (free[0] + free.size() * 0.5) * U,
 			RACK_FRONT_Z + 0.06), "%dU СВОБОДНО" % free.size())
+
+
+func rack_busy(index: int) -> bool:
+	## A cabinet a technician is inside. Reaching past him to pull a chassis out from
+	## under his hands is not something the player gets to do.
+	return locked_racks().has(index)
+
+
+func locked_racks() -> PackedInt32Array:
+	var busy := PackedInt32Array()
+	for job in _tags:
+		if _estate.JobStateOf(job) != 1:
+			continue
+		var place: int = _estate.JobPlaceOf(job)
+		if _estate.JobKindOf(job) == 1:
+			var spot: Dictionary = _spots[place]
+			if spot.has("bay"):
+				busy.append(int(spot["bay"]["entry"]["index"]))
+		elif place < _bays.size():
+			busy.append(int(_bays[place]["entry"]["index"]))
+	return busy
 
 
 func free_spots(kind: int) -> Array:
@@ -1703,6 +1745,8 @@ func _process(_delta: float) -> void:
 	if text != _hud_label.text:
 		_hud_label.text = text
 
+	if _wiring != null:
+		_wiring.lock_racks(locked_racks())
 	for job in _tags:
 		var kind: int = _estate.JobKindOf(job)
 		var what := ("ШКАФ" if kind == 1 else "СЕРВЕР %dU" % _estate.JobSlotOf(job))

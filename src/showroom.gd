@@ -60,6 +60,7 @@ var _delivery: Delivery
 var _deliveries := {}               # cabinet orders the lorry is carrying
 var _gate_leaf: Node3D
 var _gate_shut := Vector3.ZERO
+var _gate_travel := 4.4
 var _doors: Array[Dictionary] = []
 var _wiring: Wiring
 var _hud_label: Label
@@ -186,6 +187,9 @@ func _ready() -> void:
 
 	if "--build" in OS.get_cmdline_user_args():
 		_check_build(player)
+
+	if "--film" in OS.get_cmdline_user_args():
+		_film_delivery()
 
 
 const SHOTS := [
@@ -828,6 +832,7 @@ func _populate(root: Node3D, index: int, entry: Dictionary, fill_override := -1)
 const PLOT := Vector2(30.0, 26.0)     # fenced ground around the shed
 const FENCE_BAY := 2.4                # one panel, matching tools/blender/build_city.py
 const CITY_PLOT := 26.0               # spacing of the blocks beyond the fence
+const GATE_W := 4.2                   # matching make_fence_gate in build_city.py
 # Straight in from the gate: a lorry reverses through a gate in a line, and a bay
 # off to one side would need it to turn inside the yard, which it has no room to do.
 const DROP_OFF := Vector3(0.0, 0, -8.0)
@@ -874,21 +879,29 @@ func _fence() -> void:
 		# its corner. Rounding up and stepping by the nominal bay ran every side past
 		# the corner by most of a panel.
 		var bays := maxi(1, int(roundf(span / FENCE_BAY)))
-		var gap := int(bays / 2) - 1 if run[3] else -1
-		var step := Vector3(cos(yaw), 0, -sin(yaw)) * (span / bays)
+		# An even count on the gated side, so a bay boundary falls on the middle of the
+		# run and the gate fills exactly two bays. Left to the nearest whole bay the
+		# gate sat in a hole half as wide again as itself.
+		if run[3] and bays % 2 == 1:
+			bays += 1
+		var pitch := span / bays
+		var step := Vector3(cos(yaw), 0, -sin(yaw)) * pitch
+		var gap := int(bays / 2) - 1
 		for i in bays:
 			if run[3] and (i == gap or i == gap + 1):
 				continue
 			var node := _place(self, "city/fence_panel",
 				SHED_ORIGIN + start + step * i, yaw)
-			node.scale.x = (span / bays) / FENCE_BAY
+			node.scale.x = pitch / FENCE_BAY
 		if run[3]:
-			var gate := _place(self, "city/fence_gate",
-				SHED_ORIGIN + start + step * gap, yaw)
+			var at := SHED_ORIGIN + start + step * gap
+			var gate := _place(self, "city/fence_gate", at, yaw)
 			gate.name = "yard_gate"
-			_gate_leaf = _place(self, "city/gate_leaf",
-				SHED_ORIGIN + start + step * gap, yaw)
+			gate.scale.x = pitch * 2.0 / GATE_W
+			_gate_leaf = _place(self, "city/gate_leaf", at, yaw)
+			_gate_leaf.scale.x = gate.scale.x
 			_gate_shut = _gate_leaf.position
+			_gate_travel = pitch * 2.0
 	# the corner posts of adjoining runs meet; a solid block under each one hides the
 	# seam and gives the fence something to stand on
 	for corner in [Vector3(-half.x, 0, -half.y), Vector3(half.x, 0, -half.y),
@@ -1143,6 +1156,55 @@ func _watch_pair(job: int) -> void:
 	get_tree().quit()
 
 
+func _film_delivery() -> void:
+	## --film: order a cabinet and photograph the delivery as it happens. Everything
+	## about a lorry arriving is timing and where it is relative to the fence, and
+	## neither reads in a log.
+	var camera := Camera3D.new()
+	camera.fov = 70
+	camera.far = 400
+	add_child(camera)
+	camera.make_current()
+	var gate := SHED_ORIGIN + Vector3(DROP_OFF.x, 0, -PLOT.y * 0.5)
+	var bay := SHED_ORIGIN + DROP_OFF
+	var spots := free_spots(1)
+	order(1, spots[0]["place"], spots[0]["slot"])
+
+	for shot in [
+		[1.5, "run_01_far", gate + Vector3(9, 2.6, 3.0), gate + Vector3(-22, 1.4, -1.5)],
+		[4.5, "run_02_slowing", gate + Vector3(9, 2.6, 3.0), gate + Vector3(-8, 1.4, -1.0)],
+		[9.5, "run_03_at_gate", gate + Vector3(11, 2.2, 5.0), gate + Vector3(0, 1.4, -1.0)],
+		[15.5, "run_04_lining_up", gate + Vector3(12, 3.4, 6.0), gate + Vector3(2, 1.2, -2.0)],
+		[19.5, "run_05_backing", gate + Vector3(9, 2.6, 7.0), gate + Vector3(-1, 1.6, 2.0)],
+		[24.0, "run_06_at_bay", bay + Vector3(5.5, 2.4, 2.0), bay + Vector3(0, 1.2, 0)],
+		[28.0, "run_07_crate", bay + Vector3(0.2, 1.7, -2.4), bay + Vector3(0, 1.1, 0)],
+		[36.0, "run_08_gone", bay + Vector3(4.0, 2.0, -3.0), bay + Vector3(0, 1.0, 0)],
+	]:
+		await _wait_until(shot[0])
+		camera.global_position = shot[2]
+		camera.look_at(shot[3], Vector3.UP)
+		print("   %5.1f с %s: %s" % [shot[0], shot[1], _delivery.report()])
+		await _snap(shot[1])
+
+	# and the crate open, with the pieces in it
+	_delivery.open_crate(true)
+	await get_tree().create_timer(1.2).timeout
+	camera.global_position = bay + Vector3(0.1, 1.55, -2.1)
+	camera.look_at(bay + Vector3(0, 0.9, 0), Vector3.UP)
+	await _snap("run_09_open")
+	get_tree().quit()
+
+
+var _filmed_from := 0.0
+
+
+func _wait_until(seconds: float) -> void:
+	if _filmed_from == 0.0:
+		_filmed_from = Time.get_ticks_msec() / 1000.0
+	while Time.get_ticks_msec() / 1000.0 - _filmed_from < seconds:
+		await get_tree().process_frame
+
+
 func _check_build(player: ShowroomPlayer) -> void:
 	## --build: buy a cabinet, wait for the lorry, open the crate and carry the seven
 	## pieces to a marked place in order. Delivery, the crate and the assembly touch
@@ -1170,7 +1232,9 @@ func _check_build(player: ShowroomPlayer) -> void:
 
 	var spot: Dictionary = _spots[0]
 	for i in Delivery.ORDER.size():
-		var aim: Vector3 = _delivery.part_aim()
+		# the piece the game says goes on next, taken wherever it happens to be packed:
+		# the four uprights are the same object and a person grabs the nearest one
+		var aim: Vector3 = _delivery.aim_for(Delivery.ORDER[built_steps(_spots[0])])
 		eye.global_position = aim + Vector3(0, 0.25, -1.5)
 		eye.look_at(aim, Vector3.UP)
 		await get_tree().process_frame
@@ -1683,8 +1747,8 @@ func slide_gate(open: bool) -> void:
 	## separate model from the posts it hangs between.
 	if _gate_leaf == null:
 		return
-	var to := _gate_shut + (_gate_leaf.global_transform.basis.x * -4.4 if open
-		else Vector3.ZERO)
+	var to := _gate_shut + (_gate_leaf.global_transform.basis.x.normalized()
+		* -_gate_travel if open else Vector3.ZERO)
 	var slide := create_tween()
 	slide.tween_property(_gate_leaf, "position", to, Delivery.GATE_SLIDE * 0.9) \
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
@@ -1740,22 +1804,30 @@ func _enters_box(from: Vector3, along: Vector3, half: Vector3) -> float:
 	return near
 
 
-func part_place(spot: Dictionary, step: int) -> Vector3:
-	return spot["at"] + _part_offset(step)
+func part_place(spot: Dictionary) -> Vector3:
+	## Where the next piece goes — which is where whatever is in your hands will end
+	## up, because only the next piece can be put on.
+	return spot["at"] + _part_offset(built_steps(spot))
 
 
 func built_steps(spot: Dictionary) -> int:
 	return int(spot.get("built", 0))
 
 
-func can_build(spot: Dictionary, step: int) -> bool:
+func can_build(spot: Dictionary, part: String) -> bool:
 	## The pieces go together in one order: the base, then the four uprights, then the
 	## sides. Any other order is a cabinet that cannot stand, which is the only reason
 	## the order is worth asking about at all.
-	return step == built_steps(spot)
+	##
+	## What is compared is the **kind** of piece, not which of them it is. The four
+	## uprights are the same object; insisting on the one that happened to be packed
+	## next meant picking up the nearest upright and being told no.
+	var done := built_steps(spot)
+	return done < Delivery.ORDER.size() and Delivery.ORDER[done] == part
 
 
-func build_step(spot: Dictionary, step: int, part: String) -> void:
+func build_step(spot: Dictionary, part: String) -> void:
+	var step := built_steps(spot)
 	var made: Array = spot.get("made", [])
 	var node := Assets.instance("delivery/%s" % part)
 	node.position = spot["at"] + _part_offset(step)

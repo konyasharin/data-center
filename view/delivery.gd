@@ -20,7 +20,11 @@ const NAMED := {
 	"rack_part_upright": "стойка-профиль",
 	"rack_part_side": "боковина",
 }
-const APPROACH := 6.0        # seconds from the far end of the street to the gate
+# Forty metres in nine seconds and easing off gently. Eighty metres in six with a
+# quintic ease meant it covered the first half at about fifty metres a second, which
+# is not a lorry arriving, it is a lorry being fired at the gate.
+const APPROACH := 9.0
+const RUN_UP := 40.0
 const BACK_IN := 4.5         # and reversing through it
 const GATE_SLIDE := 3.0      # an electric gate is slow, and that is what reads as one
 const REACH := 2.6
@@ -69,6 +73,9 @@ func setup(site: Object, eye: Camera3D, bay: Vector3, street: float) -> void:
 
 
 func report() -> String:
+	if _lorry != null and is_instance_valid(_lorry):
+		return "машина %v, поворот %.0f°, ящик %s" % [
+			_lorry.global_position, rad_to_deg(_lorry.rotation.y), _crate != null]
 	return "ящик %s, открыт %s, деталей %d, в руках %d, под прицелом %d" % [
 		_crate != null, _open, _parts.size(), _taken, _aimed]
 
@@ -100,7 +107,7 @@ func deliver(_seconds: float) -> void:
 	_lorry = Assets.instance("delivery/lorry")
 	add_child(_lorry)
 	# the model faces along -Z, so heading east down the street is a quarter turn
-	var start := Vector3(_gate_x - 70.0, 0, _street)
+	var start := Vector3(_gate_x - RUN_UP, 0, _street)
 	var halt := Vector3(_gate_x + 9.0, 0, _street)
 	_pose(start, -PI * 0.5)
 	_message = "машина в пути"
@@ -115,7 +122,7 @@ func deliver(_seconds: float) -> void:
 	var run := create_tween()
 	# in fast and slowing to a stop, which is most of what makes it read as driving
 	run.tween_method(func(t: float) -> void: _pose(start.lerp(halt, t), -PI * 0.5),
-		0.0, 1.0, APPROACH).set_trans(Tween.TRANS_QUINT).set_ease(Tween.EASE_OUT)
+		0.0, 1.0, APPROACH).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	run.tween_callback(func() -> void:
 		_message = "ворота открываются"
 		_site.slide_gate(true))
@@ -134,8 +141,8 @@ func deliver(_seconds: float) -> void:
 	run.tween_method(func(t: float) -> void: _line_up(halt, lined, 1.0 - t),
 		0.0, 1.0, BACK_IN * 0.8).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	run.tween_method(func(t: float) -> void:
-		_pose(halt.lerp(Vector3(_gate_x + 80.0, 0, _street), t), -PI * 0.5),
-		0.0, 1.0, APPROACH * 0.7).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		_pose(halt.lerp(Vector3(_gate_x + RUN_UP, 0, _street), t), -PI * 0.5),
+		0.0, 1.0, APPROACH * 0.8).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
 	run.tween_callback(func() -> void:
 		if _lorry != null and is_instance_valid(_lorry):
 			_lorry.queue_free()
@@ -215,6 +222,15 @@ static func part_box(kind: int) -> AABB:
 	return mesh.get_aabb() if mesh != null else AABB(Vector3.ZERO, Vector3.ONE * 0.2)
 
 
+func aim_for(part: String) -> Vector3:
+	## Where a piece of that kind is. Which of four identical uprights it is does not
+	## matter to anybody, so it must not matter here either.
+	for piece in _parts:
+		if ORDER[piece["kind"]] == part:
+			return _part_at(piece["kind"])
+	return _at
+
+
 func part_aim() -> Vector3:
 	## Where to point to take the piece that goes on next. The checks aim with this
 	## rather than at a guessed height, so what they prove is that pointing at a part
@@ -224,6 +240,11 @@ func part_aim() -> Vector3:
 		if next < 0 or piece["kind"] < next:
 			next = piece["kind"]
 	return _part_at(next) if next >= 0 else _at
+
+
+func open_crate(open: bool) -> void:
+	if _crate != null and _open != open:
+		_swing(open)
 
 
 func _swing(open: bool) -> void:
@@ -270,9 +291,9 @@ func _show_target() -> void:
 		_outline.visible = false
 		return
 	var bounds := part_box(_taken)
-	var at: Vector3 = _site.part_place(spot, _taken) + bounds.get_center()
+	var at: Vector3 = _site.part_place(spot) + bounds.get_center()
 	_outline.show_at(Transform3D(Basis().scaled(bounds.size), at),
-		Outline.COOL if _site.can_build(spot, _taken) else Outline.WARM)
+		Outline.COOL if _site.can_build(spot, ORDER[_taken]) else Outline.WARM)
 
 
 func _pick_part() -> int:
@@ -364,10 +385,10 @@ func _place_part() -> void:
 	if spot.is_empty():
 		_message = "ставить надо на размеченное место"
 		return
-	if not _site.can_build(spot, _taken):
+	if not _site.can_build(spot, ORDER[_taken]):
 		_message = "сначала ставится %s" % _name(_site.built_steps(spot))
 		return
-	_site.build_step(spot, _taken, ORDER[_taken])
+	_site.build_step(spot, ORDER[_taken])
 	for i in _parts.size():
 		if _parts[i]["kind"] == _taken:
 			(_parts[i]["node"] as Node3D).queue_free()

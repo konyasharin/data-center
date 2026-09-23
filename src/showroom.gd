@@ -118,6 +118,9 @@ func _ready() -> void:
 			print("заказан шкаф -> работа %d" % job)
 			_watch_pair(job)
 
+	if "--relay" in OS.get_cmdline_user_args():
+		_watch_relay()
+
 	if "--crowd" in OS.get_cmdline_user_args():
 		_watch_crowd()
 
@@ -978,6 +981,44 @@ func _shoot_crew() -> void:
 	get_tree().quit()
 
 
+func _watch_relay() -> void:
+	## --relay: three servers ordered into one cabinet. The man standing in front of it
+	## should do all three without leaving, and nobody should cross the shed to take
+	## one off him. Walked distance is the measure — whose name is on the job says
+	## nothing about whether he wandered.
+	_stock_a_cabinet(0)
+	var jobs := PackedInt32Array()
+	for i in 3:
+		var room := free_spots(0)
+		if room.is_empty():
+			break
+		jobs.append(order(0, room[0]["place"], room[0]["slot"]))
+	print("relay: заказано %s" % [jobs])
+	var walked := PackedFloat32Array([0.0, 0.0])
+	var was := _crew.where()
+	var shot := false
+	for tick in 90:
+		await get_tree().create_timer(0.5).timeout
+		if not shot and _crew.at_job(jobs[0]) > 0:
+			shot = true
+			var camera := Camera3D.new()
+			camera.fov = 55
+			add_child(camera)
+			camera.global_position = _spots[0]["at"] + Vector3(1.75, 1.60, -1.55)
+			camera.look_at(_spots[0]["at"] + Vector3(0, 1.0, 0), Vector3.UP)
+			camera.make_current()
+			await _snap("crew_door")
+		var now := _crew.where()
+		for i in mini(now.size(), was.size()):
+			walked[i] += was[i].distance_to(now[i])
+		was = now
+		if _estate.JobsDone() >= jobs.size() + 1:
+			break
+	print("relay: сделано %d, прошли %.1f и %.1f м, брали работы %s"
+		% [_estate.JobsDone(), walked[0], walked[1], _crew.owners()])
+	get_tree().quit()
+
+
 func _watch_crowd() -> void:
 	## Two servers into the same cabinet. There is one place to stand behind a rack, so
 	## the second job has to wait for the first rather than put two people in it.
@@ -1544,7 +1585,17 @@ func _start_rack(place: int) -> void:
 	var front := Assets.instance("hardware/rack_42u_door_front")
 	front.position = Vector3(-RACK_W / 2, 0.01, RACK_FRONT_Z + 0.004)
 	root.add_child(front)
-	stages.append([front])
+	# The rear one is the door that matters: the strips, the ducts and every socket
+	# are behind it, and a cabinet built without one had its whole working side open
+	# to the room.
+	var rear := Assets.instance("hardware/rack_42u_door_rear")
+	rear.position = Vector3(RACK_W / 2, 0.01, -RACK_FRONT_Z - 0.004)
+	rear.rotation.y = PI
+	root.add_child(rear)
+	var door := {"node": rear, "at": spot["at"], "shut": PI, "open": false}
+	_doors.append(door)
+	bay["door"] = door
+	stages.append([front, rear])
 
 	for group in stages:
 		for node in group:
@@ -1676,12 +1727,34 @@ func _swing_door() -> void:
 		if d < best_d:
 			best_d = d
 			best = door
-	if best.is_empty():
-		return
+	if not best.is_empty():
+		_set_door(best, not best["open"])
 
-	best["open"] = not best["open"]
-	var node: Node3D = best["node"]
-	var target: float = best["shut"] - (deg_to_rad(105) if best["open"] else 0.0)
+
+func door_at(place: int, open: bool) -> void:
+	## A technician opens the cabinet he is about to work in and shuts it behind him,
+	## the same door the player swings with E. A crew patching through a closed
+	## perforated door is the detail that makes the rest of it look staged.
+	##
+	## `place` is what job_place() returns: the kind and the index in one number, so
+	## it outlives the job it came from — the door is shut after the work, when the
+	## worker has already let go of it.
+	if place / 1000 != 0:
+		return
+	var index := place % 1000
+	if index >= _bays.size():
+		return
+	var bay: Dictionary = _bays[index]
+	if bay.has("door"):
+		_set_door(bay["door"], open)
+
+
+func _set_door(door: Dictionary, open: bool) -> void:
+	if bool(door["open"]) == open:
+		return
+	door["open"] = open
+	var node: Node3D = door["node"]
+	var target: float = door["shut"] - (deg_to_rad(105) if open else 0.0)
 	var tween := create_tween()
 	tween.tween_property(node, "rotation:y", target, 0.45).set_trans(Tween.TRANS_CUBIC)
 
@@ -1784,7 +1857,7 @@ func _unwired_hint() -> String:
 		else "не разведены стойки %s — патчить с задней стороны" % ", ".join(bare))
 	if shed == 0:
 		return hall
-	return "%s; в сарае %d стойки без шнуров — это ваша работа, купленное бригада подключает сама" % [
+	return "%s; в сарае стоек без шнуров: %d — это ваша работа, купленное бригада подключает сама" % [
 		hall, shed]
 
 

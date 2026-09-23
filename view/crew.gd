@@ -17,6 +17,7 @@ const ARRIVED := 0.35
 const TURN := 6.0
 const CORNER := 0.25          # how close counts as reaching a corner of the path
 const REPLAN := 0.7
+const DWELL := 4.0            # seconds of nothing to do before walking back to the post
 
 enum State { IDLE, WALKING, WORKING }
 
@@ -39,6 +40,8 @@ var _seat := PackedInt32Array()
 var _owns := []
 var _home := PackedVector3Array()
 var _said := PackedFloat32Array()  # seconds since this worker last made a noise
+var _spare := PackedFloat32Array() # seconds this worker has had nothing to do
+var _took := PackedInt32Array()    # who took each job, for the checks to read back
 
 
 func setup(estate: EstateBridge, site: Object, wiring: Wiring, posts: Array) -> void:
@@ -73,6 +76,7 @@ func setup(estate: EstateBridge, site: Object, wiring: Wiring, posts: Array) -> 
 		_owns.append(false)
 		_home.append(at)
 		_said.append(0.0)
+		_spare.append(0.0)
 		_play(_body.size() - 1, "idle")
 
 
@@ -82,7 +86,7 @@ func _process(delta: float) -> void:
 	for i in _body.size():
 		match _state[i]:
 			State.IDLE:
-				_look_for_work(i)
+				_look_for_work(i, delta)
 			State.WALKING:
 				_walk(i, delta)
 			State.WORKING:
@@ -92,25 +96,54 @@ func _process(delta: float) -> void:
 
 # ------------------------------------------------------------------ choosing
 
-func _look_for_work(i: int) -> void:
-	# Down the queue rather than the oldest job only. One person per cabinet — two
+func _look_for_work(i: int, delta: float) -> void:
+	# Whatever is at your feet first. Three servers ordered into one cabinet were done
+	# by whoever happened to be scanned first that frame, so the man standing in front
+	# of it walked away and a second one walked across the shed to take his place.
+	if _claim_here(i, true):
+		return
+	# Then down the queue rather than the oldest job only. One person per cabinet — two
 	# technicians patching different servers into the same rack stand in the same half
 	# metre with their arms through each other — and taking only the oldest meant one
 	# blocked cabinet left the whole crew standing about.
-	var job: int = _estate.NextQueued(0)
-	while job >= 0:
-		if not _crowded(_site.job_place(job), i) and _estate.ClaimJob(job, i):
-			_take(i, job, true)
-			return
-		job = _estate.NextQueued(job + 1)
+	if _claim_here(i, false):
+		return
 	var helping := _needs_a_hand(i)
 	if helping >= 0:
 		_take(i, helping, false)
 		return
-	if _body[i].position.distance_to(_home[i]) > ARRIVED:
+	# Not straight back to the post: the next order for the cabinet he is standing in
+	# front of usually arrives within a few seconds, and leaving on the instant makes
+	# him walk the shed twice for nothing.
+	_spare[i] += delta
+	if _spare[i] > DWELL and _body[i].position.distance_to(_home[i]) > ARRIVED:
 		_job[i] = -1
 		_owns[i] = false
 		_head_for(i, _home[i])
+
+
+func _claim_here(i: int, near_only: bool) -> bool:
+	var job: int = _estate.NextQueued(0)
+	while job >= 0:
+		var at: Vector3 = _site.job_site(job, 0)
+		var here: bool = _body[i].position.distance_to(at) < ARRIVED
+		# and nobody else is already standing at it: crossing the shed to take a job
+		# off the man in front of it is the same shuffle seen from the other side
+		if (here or not (near_only or _idle_at(at, i))) \
+				and not _crowded(_site.job_place(job), i) \
+				and _estate.ClaimJob(job, i):
+			_take(i, job, true)
+			return true
+		job = _estate.NextQueued(job + 1)
+	return false
+
+
+func _idle_at(at: Vector3, except: int) -> bool:
+	for other in _body.size():
+		if other != except and _job[other] < 0 \
+				and _body[other].position.distance_to(at) < ARRIVED:
+			return true
+	return false
 
 
 func _crowded(place: int, except: int) -> bool:
@@ -141,6 +174,11 @@ func _needs_a_hand(i: int) -> int:
 
 
 func _take(i: int, job: int, owns: bool) -> void:
+	if owns:
+		while _took.size() <= job:
+			_took.append(-1)
+		_took[job] = i
+	_spare[i] = 0.0
 	_job[i] = job
 	_owns[i] = owns
 	_seat[i] = 0 if owns else 1
@@ -225,6 +263,7 @@ func _arrive(i: int) -> void:
 		prop.position = Vector3(0.0, -0.07, 0.0)
 		_wear_in(_bundle[i], prop)
 		_paint(i, _hue[i])
+	_site.door_at(_site.job_place(_job[i]), true)
 	if _owns[i]:
 		_site.job_started(_job[i])
 
@@ -296,11 +335,20 @@ func say(at: Vector3, stream: String, volume := -6.0) -> void:
 
 
 func _finish(i: int) -> void:
+	var place: int = _site.job_place(_job[i])
 	_job[i] = -1
 	_owns[i] = false
 	_wear_in(_bundle[i], null)
 	_state[i] = State.IDLE
+	_spare[i] = 0.0
 	_play(i, "idle")
+	# First refusal on the next order for the cabinet he is standing in, taken now
+	# rather than on his next turn: the loop has already passed him this frame, and
+	# whoever is scanned next takes it and walks over while he walks away.
+	if _claim_here(i, true):
+		return
+	if not _crowded(place, i):
+		_site.door_at(place, false)
 
 
 # ------------------------------------------------------------------- the cord
@@ -374,6 +422,20 @@ func cord_report() -> String:
 			(_body[i].global_transform.basis.z.normalized()).dot(towards.normalized())])
 	return "
 ".join(out)
+
+
+func where() -> PackedVector3Array:
+	var out := PackedVector3Array()
+	for body in _body:
+		out.append(body.position)
+	return out
+
+
+func owners() -> PackedInt32Array:
+	## Which worker took which job, in the order they were taken. Two people trading a
+	## cabinet back and forth looks the same as one man doing three jobs until this is
+	## written down.
+	return _took
 
 
 func at_job(job: int) -> int:

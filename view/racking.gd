@@ -133,11 +133,11 @@ func _pick() -> Dictionary:
 
 func _unit(bay: Dictionary, slot: int, xform: Transform3D) -> Dictionary:
 	var y: float = 0.05 + slot * U + 0.001
-	# The bezel, not the whole 750 mm box. Drawn through everything (a cabinet door
-	# stands in front of it) a full-depth outline puts its back edges low on the screen
-	# and over the units below, which reads as the wrong one being picked.
-	var box := Transform3D(Basis().scaled(Vector3(0.44, U * 0.86, 0.05)),
-		Vector3(0.0, y + U * 0.5, float(bay["face_z"]) - 0.02))
+	# The whole unit, not just its face: the part you look at when you mean to pull a
+	# box is the box, and outlining a five-centimetre slab of it makes the rest look
+	# like it is not the target.
+	var box := Transform3D(Basis().scaled(Vector3(0.44, U * 0.86, 0.74)),
+		Vector3(0.0, y + U * 0.5, float(bay["face_z"]) - 0.375))
 	if _held >= 0:
 		if not PackedInt32Array(bay["free"]).has(slot):
 			return {}
@@ -296,6 +296,8 @@ func _glow(colour: Color) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = colour
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.no_depth_test = true
+	# Depth-tested, unlike most highlights. Drawn through everything, the back edges of
+	# a 750 mm box sit low on the screen and over the units below it — which is what
+	# read as the wrong unit being picked.
 	mat.render_priority = 8
 	return mat

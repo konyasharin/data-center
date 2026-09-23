@@ -99,32 +99,32 @@ func _unhandled_input(event: InputEvent) -> void:
 func _pick() -> Dictionary:
 	## The unit the crosshair is on: a free one to fill, or a chassis to pull. Only one
 	## of the two is offered at a time, because only one of them can be done.
+	## The nearest cabinet the crosshair touches, and then that cabinet only. Taking
+	## the nearest cabinet that happens to hold a takeable chassis instead means a
+	## blanking panel is see-through: you look at it and a server in the rack behind
+	## lights up.
 	var origin := _eye.global_position
 	var dir := -_eye.global_transform.basis.z
-	var best := {}
-	var best_at := REACH
+	var front := {}
+	var front_at := REACH
 	for bay in _bays:
 		var xform: Transform3D = bay["at_xform"]
 		var inv := xform.affine_inverse()
 		var from := inv * origin
 		var along := inv.basis * dir
-		var face: float = bay["face_z"]
 		if absf(along.z) < 0.001:
 			continue
-		var t := (face - from.z) / along.z
-		if t <= 0.05 or t >= best_at:
+		var t := (float(bay["face_z"]) - from.z) / along.z
+		if t <= 0.05 or t >= front_at:
 			continue
 		var hit := from + along * t
-		if absf(hit.x) > 0.26:
+		if absf(hit.x) > 0.26 or hit.y < 0.05 or hit.y > 0.05 + 41.0 * U:
 			continue
-		var slot := floori((hit.y - 0.05 - 0.001) / U)
-		if slot < 1 or slot > 40:
-			continue
-		var found := _unit(bay, slot, xform)
-		if not found.is_empty():
-			best = found
-			best_at = t
-	return best
+		front = {"bay": bay, "xform": xform, "slot": floori((hit.y - 0.051) / U)}
+		front_at = t
+	if front.is_empty():
+		return {}
+	return _unit(front["bay"], front["slot"], front["xform"])
 
 
 func _unit(bay: Dictionary, slot: int, xform: Transform3D) -> Dictionary:

@@ -2,13 +2,13 @@
 
 importer="wav"
 type="AudioStreamWAV"
-uid="uid://cukl3c7oegbtu"
-path="res://.godot/imported/rack_down.wav-63fc4c5ab8d4f6f991e36c950fb43a6c.sample"
+uid="uid://cqwofyjjeorxe"
+path="res://.godot/imported/rack_door.wav-c646fcfb956ec88cca4669c21569f5ea.sample"
 
 [deps]
 
-source_file="res://assets/audio/rack_down.wav"
-dest_files=["res://.godot/imported/rack_down.wav-63fc4c5ab8d4f6f991e36c950fb43a6c.sample"]
+source_file="res://assets/audio/rack_door.wav"
+dest_files=["res://.godot/imported/rack_door.wav-c646fcfb956ec88cca4669c21569f5ea.sample"]
 
 [params]
 

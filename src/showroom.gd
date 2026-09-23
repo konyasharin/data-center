@@ -40,6 +40,7 @@ const CHANNEL_Z := -0.44
 const HALL := Vector2i(20, 14)      # floor tiles
 const LOD_SWITCH := 9.0              # metres: detailed chassis inside, lod1 beyond
 const SHED_ORIGIN := Vector3(0, 0, 16.0)
+const SHED_SPOTS := 5           # marked places for cabinets along the shed wall
 const NAV_SOURCE := "nav_source"
 
 var _label_font: Font
@@ -69,7 +70,6 @@ func _ready() -> void:
 	_wiring.build()
 	_prewire()
 	_catalogue()
-	_people()
 	_navigation()
 	_shift()
 	_hud()
@@ -98,12 +98,14 @@ func _ready() -> void:
 	if "--order" in OS.get_cmdline_user_args():
 		# one of each, left for the crew to walk over and do: what the laptop would
 		# have queued, without a hand on the mouse
-		for kind in [0, 1]:
+		for kind in [1, 0]:
 			var spots := free_spots(kind)
-			if not spots.is_empty():
-				print("заказано %d -> работа %d, место %s"
-					% [kind, order(kind, spots[0]["place"], spots[0]["slot"]),
-						spots[0]["label"]])
+			if spots.is_empty():
+				print("заказано %d: ставить некуда" % kind)
+				continue
+			print("заказано %d -> работа %d, место %s"
+				% [kind, order(kind, spots[0]["place"], spots[0]["slot"]),
+					spots[0]["label"]])
 		_watch_bays()
 		_check_nav()
 
@@ -780,21 +782,6 @@ func _shed() -> void:
 	door.rotation.y = deg_to_rad(-75)
 	shed.add_child(door)
 
-	for i in 3:
-		var rack := Node3D.new()
-		rack.position = Vector3(-1.6 + i * 0.62, 0, 1.6)
-		shed.add_child(rack)
-		rack.add_child(Assets.instance("hardware/rack_42u_frame"))
-		var front := Assets.instance("hardware/rack_42u_door_front")
-		front.position = Vector3(-RACK_W / 2, 0.01, RACK_FRONT_Z + 0.004)
-		front.rotation.y = deg_to_rad(-95 if i == 1 else 0)
-		rack.add_child(front)
-		# phase-1 racks are numbered away from the hall so nothing reaches between the
-		# two rooms; the shed is left unpatched on purpose, it is where you start
-		var entry: Dictionary = _wiring.rack(SHED_RACK + i,
-			Transform3D(Basis(), rack.position + SHED_ORIGIN))
-		_fittings(rack, entry, 1)
-		_open_bay(_populate(rack, i, entry), rack.position + SHED_ORIGIN)
 
 	_place(shed, "furniture/desk", Vector3(2.0, 0, 1.2), PI * 0.5)
 	_place(shed, "terminal/laptop_base", Vector3(2.0, 0.74, 1.2), PI * 0.5)
@@ -835,15 +822,17 @@ func _shed() -> void:
 
 	_place(self, "cooling/ac_outdoor", SHED_ORIGIN + Vector3(4.4, 0, 1.0), -PI * 0.5)
 
-	# Two marked places for cabinets, continuing the row the three standing ones make.
-	# The shop has to be able to say where a purchase lands before it is paid for, and
-	# the room has to show the same answer.
-	for i in 2:
-		var at := Vector3(-1.6 + (3 + i) * 0.62, 0, 1.6)
+	# The shed starts bare. Everything in it is bought and carried in, which is the
+	# loop the phase is about (docs/12, шаг 6) — a room that comes with three cabinets
+	# already standing skips the only part of it worth playing.
+	for i in SHED_SPOTS:
+		var at := Vector3(-1.6 + i * 0.62, 0, 1.6)
 		_spots.append({
 			"at": at + SHED_ORIGIN, "taken": false, "index": _spots.size(),
 			"mark": _floor_mark(shed, at),
-			"sign": _sign(shed, at + Vector3(0, 0.9, 0), "МЕСТО ПОД ШКАФ"),
+			# low and inside its own rectangle: five of these at head height line up in
+			# the view and read as one smeared row of text
+			"sign": _sign(shed, at + Vector3(0, 0.32, 0), "ШКАФ"),
 		})
 
 
@@ -954,7 +943,7 @@ func _shoot_crew() -> void:
 	camera.fov = 55
 	add_child(camera)
 
-	for kind in [0, 1]:
+	for kind in [1, 0]:
 		var spots := free_spots(kind)
 		if spots.is_empty():
 			continue
@@ -1056,12 +1045,17 @@ func _check_racking(player: ShowroomPlayer) -> void:
 	## free-unit list and the port positions at once, and all three are silent when
 	## they disagree.
 	player.frozen = true
+	_stock_a_cabinet(4)
+	if _bays.is_empty():
+		print("rack: шкафов нет")
+		get_tree().quit()
+		return
 	var bay: Dictionary = _bays[0]
 	var eye := player.eye()
 	print("rack: юнитов свободно %s, серверов %d"
 		% [bay["free"], (bay["server_tf"] as Array).size()])
 
-	await _look_at(eye, bay, 10)
+	await _look_at(eye, bay, 2)
 	print("   навёлся: %s" % _racking.report())
 	print("   подсказка: %s" % _racking.hud_text())
 	await _snap("rack_highlight")
@@ -1070,7 +1064,7 @@ func _check_racking(player: ShowroomPlayer) -> void:
 	print("   вынул: %s, серверов %d, свободно %s"
 		% [_racking.report(), (bay["server_tf"] as Array).size(), bay["free"]])
 
-	await _look_at(eye, bay, 24)
+	await _look_at(eye, bay, 7)
 	print("   навёлся на пустой: %s" % _racking.report())
 	await _press(KEY_X)
 	await get_tree().create_timer(Racking.SLIDE + 0.4).timeout
@@ -1086,6 +1080,28 @@ func _snap(name: String) -> void:
 	DirAccess.make_dir_recursive_absolute(dir)
 	get_viewport().get_texture().get_image().save_png("%s/%s.png" % [dir, name])
 	print("shot: ", ProjectSettings.globalize_path(dir), "/", name, ".png")
+
+
+func _stock_a_cabinet(servers: int) -> void:
+	## A cabinet and a few boxes in it, without waiting for anyone to walk over. The
+	## shed starts bare now, so every check that needs hardware has to put it there.
+	var spots := free_spots(1)
+	if spots.is_empty():
+		return
+	var job := order(1, spots[0]["place"], spots[0]["slot"])
+	_estate.Claim(0)
+	while not _estate.Advance(job, 5.0):
+		pass
+	job_done(job)
+	for i in servers:
+		var room := free_spots(0)
+		if room.is_empty():
+			break
+		var one := order(0, room[0]["place"], room[0]["slot"])
+		_estate.Claim(0)
+		while not _estate.Advance(one, 5.0):
+			pass
+		job_done(one)
 
 
 func _look_at(eye: Camera3D, bay: Dictionary, slot: int) -> void:
@@ -1160,7 +1176,7 @@ func _check_shop() -> void:
 	var servers: int = _wiring.racks().reduce(
 		func(n, entry): return n + entry["servers"].size(), 0)
 
-	for kind in [0, 1]:
+	for kind in [1, 0]:
 		var spots := free_spots(kind)
 		if spots.is_empty():
 			print("   некуда ставить, вид %d" % kind)
@@ -1239,51 +1255,6 @@ func _shift() -> void:
 		SHED_ORIGIN + Vector3(0.9, 0, -1.4),
 		SHED_ORIGIN + Vector3(1.7, 0, -1.4),
 	])
-
-
-func _people() -> void:
-	var poses := [
-		[Vector3(1.9, PLENUM, 0.1), deg_to_rad(90), "walk"],
-		[Vector3(-0.9, PLENUM, 0.05), deg_to_rad(0), "work_stand"],
-		[Vector3(0.3, PLENUM, -0.1), deg_to_rad(180), "work_crouch"],
-		[SHED_ORIGIN + Vector3(1.4, 0, 1.2), deg_to_rad(-90), "type"],
-		[SHED_ORIGIN + Vector3(-0.3, 0, 0.2), deg_to_rad(150), "carry_idle"],
-	]
-	for pose in poses:
-		var worker: Node3D = Assets.scene("characters/worker")
-		worker.position = pose[0]
-		worker.rotation.y = pose[1]
-		add_child(worker)
-
-		var helmet := Assets.instance("characters/helmet")
-		var skeleton := _find_skeleton(worker)
-		if skeleton != null:
-			var attach := BoneAttachment3D.new()
-			attach.bone_name = "Head"
-			skeleton.add_child(attach)
-			attach.add_child(helmet)
-
-		var player := _find_player(worker)
-		if player != null:
-			var name: String = pose[2]
-			if player.has_animation(name):
-				var anim := player.get_animation(name)
-				anim.loop_mode = Animation.LOOP_LINEAR
-				player.play(name)
-
-
-func _find_skeleton(root: Node) -> Skeleton3D:
-	for node in _walk(root):
-		if node is Skeleton3D:
-			return node
-	return null
-
-
-func _find_player(root: Node) -> AnimationPlayer:
-	for node in _walk(root):
-		if node is AnimationPlayer:
-			return node
-	return null
 
 
 # ------------------------------------------------------------- места и покупки
@@ -1416,6 +1387,10 @@ func job_beat(_job: int) -> float:
 # What the work has produced so far, per job. A technician racks the box, then plugs
 # one cord at a time — three of them, and the coil in their hand is whichever one is
 # going in. All of it appearing at once was the whole job happening on the last frame.
+# One noise per kind of part. The same sample four times over reads as a stutter,
+# and the parts are not alike: a frame lands, rails clatter, panels click home, a
+# door swings and catches.
+const PART_SOUND := ["rack_frame", "rack_rail", "rack_panel", "rack_door"]
 const BOX_IN := 0.20
 const CORD_AT := [0.40, 0.60, 0.80]
 
@@ -1431,7 +1406,7 @@ func job_tick(job: int, _before: float, after: float) -> void:
 	var at := job_site(job)
 	if step["device"] < 0 and after >= BOX_IN:
 		step["device"] = _rack_server(place, _estate.JobSlotOf(job))
-		_crew.say(at + Vector3(0, 0.8, 0), "rack_part", -6.0)
+		_crew.say(at + Vector3(0, 0.8, 0), "rack_panel", -6.0)
 	if step["device"] >= 0:
 		for cord in CORD_AT.size():
 			if int(step["cords"]) > cord or after < CORD_AT[cord]:
@@ -1548,8 +1523,8 @@ func _show_rack(place: int, progress: float) -> void:
 		for node in stages[int(spot["shown"])]:
 			node.visible = true
 		spot["shown"] = int(spot["shown"]) + 1
-		_crew.say(spot["at"] + Vector3(0, 0.4, 0),
-			"rack_down" if int(spot["shown"]) == stages.size() else "rack_part", -4.0)
+		_crew.say(spot["at"] + Vector3(0, 0.4, 0), PART_SOUND[
+			mini(int(spot["shown"]) - 1, PART_SOUND.size() - 1)], -4.0)
 
 
 func _raise_rack(place: int) -> void:

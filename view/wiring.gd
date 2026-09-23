@@ -784,11 +784,16 @@ func _unplug() -> void:
 func _plugged(port: int, going_in: bool) -> void:
 	## The click, and the short movement that goes with it. A connector that simply
 	## appears in a socket reads as a state flipping, not as a thing being pushed in.
+	# A connector is a small noise right in front of you. Left on the defaults it
+	# falls off as 1/r from three metres and never stops, so one plug is heard across
+	# the whole hall.
 	var sound := AudioStreamPlayer3D.new()
 	sound.stream = _plug_in if going_in else _plug_out
 	sound.position = _port_pos[port]
-	sound.unit_size = 2.5
+	sound.unit_size = 0.9
 	sound.max_db = -4.0
+	sound.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
+	sound.max_distance = 9.0
 	add_child(sound)
 	sound.play()
 	sound.finished.connect(sound.queue_free)

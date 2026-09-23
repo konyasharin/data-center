@@ -280,11 +280,16 @@ func _noise(i: int, delta: float) -> void:
 
 
 func say(at: Vector3, stream: String, volume := -6.0) -> void:
+	## A knock in a rack is a small noise a metre wide, not something heard across a
+	## hall. The default falls off as 1/r from three metres out and never stops, which
+	## is why every plug in the shed carried to the far end of the room.
 	var player := AudioStreamPlayer3D.new()
 	player.stream = load("res://assets/audio/%s.wav" % stream)
 	player.position = at
-	player.unit_size = 3.0
+	player.unit_size = 0.9
 	player.max_db = volume
+	player.attenuation_model = AudioStreamPlayer3D.ATTENUATION_INVERSE_SQUARE_DISTANCE
+	player.max_distance = 9.0
 	add_child(player)
 	player.play()
 	player.finished.connect(player.queue_free)

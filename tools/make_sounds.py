@@ -85,29 +85,47 @@ def main():
 		unplug[at] += v * 0.75
 	write("plug_out.wav", unplug)
 
-	# A cabinet panel set down on the one below it: a low body with a bit of ring, not
-	# a crash. It plays several times while one is assembled, so anything sharper gets
-	# tiring by the third piece.
-	thud = noise_burst(0.16, 4.0, 120, 900, 31)
-	ring = click(1180, 0.10, 6.0, 32)
-	part = thud[:]
-	for i, v in enumerate(ring):
-		at = int(RATE * 0.006) + i
-		while at >= len(part):
-			part.append(0.0)
-		part[at] += v * 0.35
-	# the frame flexing after the weight lands
-	for i in range(len(part)):
-		t = i / RATE
-		part[i] += 0.18 * math.sin(TAU * 64 * t) * math.exp(-9.0 * t)
-	write("rack_part.wav", part)
+	# Putting a cabinet together, one part at a time. Four different noises rather than
+	# one repeated four times: the same sample four times reads as a stutter, and the
+	# parts are not alike — a frame lands, rails clatter, panels click home, a door
+	# swings and latches.
 
-	# The cabinet itself going down on the floor: heavier, longer, no ring at all.
-	floor = noise_burst(0.34, 3.0, 70, 520, 41)
-	for i in range(len(floor)):
+	# the empty frame set down on the floor: heavy, long, no ring
+	frame = noise_burst(0.36, 3.0, 70, 520, 41)
+	for i in range(len(frame)):
 		t = i / RATE
-		floor[i] += 0.30 * math.sin(TAU * 41 * t) * math.exp(-5.0 * t)
-	write("rack_down.wav", floor)
+		frame[i] += 0.32 * math.sin(TAU * 41 * t) * math.exp(-5.0 * t)
+	write("rack_frame.wav", frame)
+
+	# rails and strips going in: several small metallic knocks in quick succession
+	rail = noise_burst(0.22, 5.0, 300, 2600, 51)
+	for n, (delay, pitch) in enumerate(((0.000, 1640), (0.045, 1980), (0.092, 1450))):
+		for i, v in enumerate(click(pitch, 0.045, 10.0, 52 + n)):
+			at = int(RATE * delay) + i
+			while at >= len(rail):
+				rail.append(0.0)
+			rail[at] += v * 0.5
+	write("rack_rail.wav", rail)
+
+	# a flat panel pushed home against the rails: a short body and one bright click
+	panel = noise_burst(0.13, 6.0, 200, 1500, 61)
+	for i, v in enumerate(click(2150, 0.035, 12.0, 62)):
+		at = int(RATE * 0.055) + i
+		while at >= len(panel):
+			panel.append(0.0)
+		panel[at] += v * 0.45
+	write("rack_panel.wav", panel)
+
+	# the door: a slow sweep of air, then the catch
+	door = noise_burst(0.30, 2.2, 160, 900, 71)
+	for i in range(len(door)):
+		door[i] *= 0.55
+	for i, v in enumerate(click(760, 0.05, 9.0, 72)):
+		at = int(RATE * 0.24) + i
+		while at >= len(door):
+			door.append(0.0)
+		door[at] += v * 0.9
+	write("rack_door.wav", door)
 
 
 main()

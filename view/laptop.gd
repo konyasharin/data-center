@@ -11,6 +11,7 @@ extends Node3D
 
 const SCREEN := Vector2i(960, 600)
 const FLY := 0.5             # seconds the camera takes to get to the screen and back
+const SEATED_FOV := 42.0     # narrow enough that the screen fills the view
 const REACH := 1.6           # metres you can be from the desk and still sit down
 # How far off the screen you may be looking. Generous on purpose: a laptop on a desk
 # is well below eye level, so standing right at it you are looking down at it by a
@@ -60,7 +61,6 @@ func setup(display: Node3D, estate: EstateBridge, site: Object) -> void:
 	_panel.material_override = lit
 
 	_seat = Camera3D.new()
-	_seat.fov = 42.0
 	add_child(_seat)
 	# After entering the tree, not before: a camera that is the first one in the
 	# viewport becomes the current one on the way in, and this one is built while the
@@ -98,8 +98,9 @@ func try_open() -> bool:
 	# are looking from instead of reading the screen.
 	if _eye != null and is_instance_valid(_eye):
 		_seat.global_transform = _eye.global_transform
+		_seat.fov = _eye.fov
 	_seat.current = true
-	_fly_to(_pose, Callable())
+	_fly_to(_pose, SEATED_FOV, Callable())
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	if _player != null:
 		_player.frozen = true
@@ -118,7 +119,7 @@ func close() -> void:
 		return
 	# Frozen until the camera lands: walking away while the view is still pulling back
 	# out of the screen is the one thing worse than the cut it replaces.
-	_fly_to(_eye.global_transform, _stand_up)
+	_fly_to(_eye.global_transform, _eye.fov, _stand_up)
 
 
 func _stand_up() -> void:
@@ -129,14 +130,20 @@ func _stand_up() -> void:
 		_player.frozen = false
 
 
-func _fly_to(to: Transform3D, then: Callable) -> void:
+func _fly_to(to: Transform3D, lens: float, then: Callable) -> void:
+	## The lens travels with the camera. Moving only the transform and swapping the
+	## field of view at either end is the jump: 70 degrees walking around and 42 at the
+	## screen is most of a step backwards, applied in one frame.
 	var from := _seat.global_transform
+	var was := _seat.fov
 	if _flight != null and _flight.is_valid():
 		_flight.kill()
 	_flight = create_tween()
 	_flight.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	_flight.tween_method(
-		func(t: float) -> void: _seat.global_transform = from.interpolate_with(to, t),
+		func(t: float) -> void:
+			_seat.global_transform = from.interpolate_with(to, t)
+			_seat.fov = lerpf(was, lens, t),
 		0.0, 1.0, FLY)
 	if not then.is_null():
 		_flight.finished.connect(then)
@@ -217,6 +224,7 @@ func _place_seat() -> void:
 	_seat.global_position = centre + normal * 0.44 + Vector3.UP * 0.07
 	_seat.look_at(centre, Vector3.UP)
 	_pose = _seat.global_transform
+	_seat.fov = SEATED_FOV
 
 
 func reach_numbers() -> Array:

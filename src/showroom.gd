@@ -55,6 +55,7 @@ var _bays: Array[Dictionary] = []
 var _spots: Array[Dictionary] = []
 var _tags := {}                     # job -> the sign standing over it while it runs
 var _doing := {}                    # job -> how far the work has physically got
+var _obstacles: Array = []          # loose things the crosshair cannot see through
 var _doors: Array[Dictionary] = []
 var _wiring: Wiring
 var _hud_label: Label
@@ -813,8 +814,9 @@ func _populate(root: Node3D, index: int, entry: Dictionary, fill_override := -1)
 ## from inside — the fence is what actually stops the player, and everything beyond
 ## it exists to say where this is.
 
-const PLOT := Vector2(26.0, 22.0)     # fenced ground around the shed
+const PLOT := Vector2(30.0, 26.0)     # fenced ground around the shed
 const FENCE_BAY := 2.4                # one panel, matching tools/blender/build_city.py
+const CITY_PLOT := 26.0               # spacing of the blocks beyond the fence
 const DROP_OFF := Vector3(6.6, 0, -4.2)   # delivery bay, relative to the shed
 
 
@@ -824,7 +826,10 @@ func _yard() -> void:
 	ground.add_to_group(NAV_SOURCE)
 	_static_box(Vector3(160, 0.4, 160), SHED_ORIGIN + Vector3(0, -0.2, 0))
 	# the yard itself is concrete, the street beyond the fence is not
-	_slab(Vector3(PLOT.x, 0.06, PLOT.y), SHED_ORIGIN + Vector3(0, -0.02, 0),
+	# The yard surface sits a centimetre below the shed floor: laid flush, it covers
+	# the painted places inside the shed, which then read as missing rather than as
+	# hidden.
+	_slab(Vector3(PLOT.x, 0.06, PLOT.y), SHED_ORIGIN + Vector3(0, -0.04, 0),
 		Color(0.42, 0.41, 0.39)).add_to_group(NAV_SOURCE)
 
 	_fence()
@@ -833,46 +838,75 @@ func _yard() -> void:
 
 
 func _fence() -> void:
+	## Four runs of panels laid end to end around the plot, with the gate standing in
+	## the gap on the street side. A panel is authored from its left post along +X, so
+	## a run is a start corner, a direction and a count — written as one rule rather
+	## than four cases, because four cases is how the last one ended up with holes in
+	## it on two sides.
 	var half := PLOT * 0.5
-	# the gate faces the street, which is the side the trucks come from
-	for side in 4:
-		var along := side % 2 == 0
-		var span: float = PLOT.x if along else PLOT.y
-		var bays := int(ceilf(span / FENCE_BAY))
+	var runs := [
+		[Vector3(-half.x, 0, -half.y), 0.0, PLOT.x, true],        # street side
+		[Vector3(half.x, 0, -half.y), -PI * 0.5, PLOT.y, false],
+		[Vector3(half.x, 0, half.y), PI, PLOT.x, false],
+		[Vector3(-half.x, 0, half.y), PI * 0.5, PLOT.y, false],
+	]
+	for run in runs:
+		var start: Vector3 = run[0]
+		var yaw: float = run[1]
+		var step := Vector3(cos(yaw), 0, -sin(yaw)) * FENCE_BAY
+		var bays := int(ceilf(float(run[2]) / FENCE_BAY))
+		var gap := int(bays / 2) - 1 if run[3] else -1
 		for i in bays:
-			if side == 0 and i in [int(bays / 2) - 1, int(bays / 2)]:
+			if run[3] and (i == gap or i == gap + 1):
 				continue
-			var offset := -span * 0.5 + i * FENCE_BAY
-			var at := Vector3(offset, 0, -half.y) if along else Vector3(
-				-half.x if side == 1 else half.x, 0, offset)
-			var node := _place(self, "city/fence_panel", SHED_ORIGIN + at, 0.0)
-			node.rotation.y = 0.0 if along else PI * 0.5
-			if side == 2:
-				node.position = SHED_ORIGIN + Vector3(offset, 0, half.y)
-	var gate := _place(self, "city/fence_gate",
-		SHED_ORIGIN + Vector3(-1.8, 0, -half.y), 0.0)
-	gate.name = "yard_gate"
+			_place(self, "city/fence_panel", SHED_ORIGIN + start + step * i, yaw)
+		if run[3]:
+			var gate := _place(self, "city/fence_gate",
+				SHED_ORIGIN + start + step * gap, yaw)
+			gate.name = "yard_gate"
+	# the corner posts of adjoining runs meet; a solid block under each one hides the
+	# seam and gives the fence something to stand on
+	for corner in [Vector3(-half.x, 0, -half.y), Vector3(half.x, 0, -half.y),
+			Vector3(half.x, 0, half.y), Vector3(-half.x, 0, half.y)]:
+		_slab(Vector3(0.22, 0.30, 0.22), SHED_ORIGIN + corner + Vector3(0, 0.15, 0),
+			Color(0.24, 0.24, 0.25))
 
 
 func _city() -> void:
 	## A skyline, placed by hand rather than scattered: three blocks and a kiosk seen
 	## from one spot, and what matters is that nothing lines up into a wall and the
 	## gaps between them read as streets.
-	var blocks := [
-		["city/city_low", Vector3(-19, 0, -25), 0.0],
-		["city/city_low", Vector3(16, 0, -24), 0.1],
-		["city/city_slab", Vector3(-2, 0, -40), 0.0],
-		["city/city_tower", Vector3(-31, 0, -52), 0.3],
-		["city/city_tower", Vector3(22, 0, -58), -0.2],
-		["city/city_slab", Vector3(-52, 0, -26), PI * 0.5],
-		["city/city_slab", Vector3(44, 0, -18), PI * 0.5],
-		["city/city_low", Vector3(-34, 0, 18), PI * 0.5],
-		["city/city_tower", Vector3(-16, 0, 46), 0.2],
-		["city/city_slab", Vector3(34, 0, 26), PI * 0.5],
-		["city/city_low", Vector3(12, 0, 40), 0.0],
-	]
-	for row in blocks:
-		_place(self, row[0], SHED_ORIGIN + (row[1] as Vector3), row[2])
+	## A grid of plots with a building on most of them, seeded so it is the same city
+	## every time. Placed by hand it was nine boxes and read as nine boxes; what makes
+	## a skyline is quantity and the gaps between them, not the buildings.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20260923
+	var kinds := ["city/city_tower", "city/city_slab", "city/city_low"]
+	var placed := 0
+	for gx in range(-7, 8):
+		for gz in range(-7, 8):
+			var at := Vector3(gx * CITY_PLOT + rng.randf_range(-3.0, 3.0), 0,
+				gz * CITY_PLOT + rng.randf_range(-3.0, 3.0))
+			# nothing on our own plot, nothing standing in the street, and a hole here
+			# and there so the blocks do not read as a wall
+			if absf(at.x) < PLOT.x * 0.5 + 12.0 and absf(at.z) < PLOT.y * 0.5 + 12.0:
+				continue
+			if absf(at.z + 14.5) < 9.0:
+				continue
+			if rng.randf() < 0.18:
+				continue
+			var far := maxf(absf(at.x), absf(at.z))
+			# low buildings near the fence, towers further out: the skyline then has a
+			# shape instead of a flat edge
+			var kind: String = kinds[0] if far > 90.0 else (
+				kinds[1] if far > 55.0 else kinds[2])
+			if rng.randf() < 0.25:
+				kind = kinds[rng.randi() % kinds.size()]
+			var node := _place(self, kind, SHED_ORIGIN + at,
+				snappedf(rng.randf_range(-PI, PI), PI * 0.5))
+			node.scale = Vector3.ONE * rng.randf_range(0.85, 1.6)
+			placed += 1
+	print("город: %d домов" % placed)
 	_place(self, "city/kiosk", SHED_ORIGIN + Vector3(6.0, 0, -13.5), PI)
 	# the street: a strip of darker tarmac with a painted centre line
 	_slab(Vector3(120, 0.04, 7.0), SHED_ORIGIN + Vector3(0, 0.01, -14.5),
@@ -945,9 +979,6 @@ func _shed() -> void:
 	_laptop.setup(display, _estate, self)
 
 	_place(shed, "furniture/shelf", Vector3(-2.9, 0, 0.4), PI * 0.5)
-	_place(shed, "props/box_large", Vector3(-2.75, 0.49, 0.1), 0.3)
-	_place(shed, "props/box_large", Vector3(-2.75, 0.49, 0.55), -0.2)
-	_place(shed, "props/box_small", Vector3(-2.8, 0.94, 0.3), 0.6)
 	_place(shed, "power/ups", Vector3(-2.9, 0, 2.0), PI * 0.5)
 	_place(shed, "power/breaker_panel", Vector3(-3.4, 1.5, -1.2), PI * 0.5)
 	_place(shed, "cooling/ac_indoor", Vector3(0.0, 2.6, 2.6), PI)
@@ -955,10 +986,9 @@ func _shed() -> void:
 	_place(shed, "props/toolbox", Vector3(1.0, 0, 2.2), 0.4)
 	_place(shed, "props/cable_coil", Vector3(0.4, 0, 2.3), 0)
 	_place(shed, "props/cart", Vector3(0.2, 0, -0.6), PI * 0.25)
-	_place(shed, "furniture/pallet", Vector3(-0.9, 0, -1.9), 0.1)
-	_place(shed, "props/box_large", Vector3(-0.9, 0.145, -1.9), 0.1)
-	_place(shed, "loto/loto_tag", Vector3(-1.6 + 0.62, 1.05, 0.98), 0)
-	_place(shed, "loto/loto_lock", Vector3(-0.5, 0.75, 1.15), 0)
+	_place(shed, "furniture/pallet", Vector3(-2.6, 0, -1.9), 0.1)
+	_place(shed, "props/box_large", Vector3(-2.6, 0.145, -1.9), 0.1)
+	_place(shed, "props/box_small", Vector3(-2.2, 0, -2.3), 0.5)
 
 	for i in 2:
 		var lamp := Assets.instance("props/ceiling_lamp")
@@ -978,12 +1008,13 @@ func _shed() -> void:
 	# already standing skips the only part of it worth playing.
 	for i in SHED_SPOTS:
 		var at := Vector3(-1.6 + i * 0.62, 0, 1.6)
+		# No caption. A painted rectangle on a floor says "something stands here" on its
+		# own, and five floating words in a small room say nothing except that they are
+		# in the way.
 		_spots.append({
 			"at": at + SHED_ORIGIN, "taken": false, "index": _spots.size(),
 			"mark": _floor_mark(shed, at),
-			# low and inside its own rectangle: five of these at head height line up in
-			# the view and read as one smeared row of text
-			"sign": _sign(shed, at + Vector3(0, 0.32, 0), "ШКАФ"),
+			"sign": null,
 		})
 
 
@@ -1576,6 +1607,13 @@ func _open_bay(bay: Dictionary, at: Vector3) -> void:
 			RACK_FRONT_Z + 0.06), "%dU СВОБОДНО" % free.size())
 
 
+func solid_boxes() -> Array:
+	## Everything loose in the room that the crosshair cannot see through. Cabinets are
+	## not in here — the picker knows about those already and has to be able to reach
+	## into the one it is standing at.
+	return _obstacles
+
+
 func rack_busy(index: int) -> bool:
 	## A cabinet a technician is inside. Reaching past him to pull a chassis out from
 	## under his hands is not something the player gets to do.
@@ -1847,7 +1885,7 @@ func _raise_rack(place: int) -> void:
 	_open_bay(spot["bay"], spot["at"])
 	if is_instance_valid(spot["mark"]):
 		spot["mark"].queue_free()
-	if is_instance_valid(spot["sign"]):
+	if spot["sign"] != null and is_instance_valid(spot["sign"]):
 		spot["sign"].queue_free()
 
 

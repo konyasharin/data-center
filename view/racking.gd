@@ -103,28 +103,47 @@ func _unhandled_input(event: InputEvent) -> void:
 # ------------------------------------------------------------------- picking
 
 func _pick() -> Dictionary:
-	## The unit the crosshair is on: a free one to fill, or a chassis to pull. Only one
-	## of the two is offered at a time, because only one of them can be done.
 	## The first unit the crosshair actually enters, as a box and not as a height on a
 	## plane. A plane gives the right answer only for a level ray: looking down at a
 	## rack from standing height, the chassis face is eighty millimetres further along
 	## than the cabinet face, and eighty millimetres of depth at that angle is most of
-	## a unit — so the unit under the crosshair and the unit the plane named were not
-	## the same one.
-	## Two answers at once: the first unit the ray runs into, and the first open one it
-	## passes through. An empty unit is air — looking down at a rack the ray crosses
-	## every open unit above the one being aimed at, and treating those as walls meant
-	## nothing could be picked from above at all. A blanking panel is not air, so it
-	## still blocks, which is what stops it being see-through.
+	## a unit.
+	##
+	## Anything standing in front of a cabinet hides it — another cabinet, a crate,
+	## the parts of one being built. Only unit boxes were tested before, so the
+	## crosshair read straight through whatever was in the way.
 	var origin := _eye.global_position
 	var dir := -_eye.global_transform.basis.z
+
+	var shell := PackedFloat32Array()
+	for bay in _bays:
+		var inv := (bay["at_xform"] as Transform3D).affine_inverse()
+		var face: float = bay["face_z"]
+		var t := _enters(inv * origin, inv.basis * dir,
+			Vector3(-0.32, 0.0, face - DEEP - 0.12), Vector3(0.32, 2.1, face + 0.06))
+		shell.append(REACH if t < 0.05 else t)
+
+	var loose := REACH
+	for box in _site.solid_boxes():
+		var inv: Transform3D = (box["xform"] as Transform3D).affine_inverse()
+		var t := _enters(inv * origin, inv.basis * dir, -(box["half"] as Vector3),
+			box["half"])
+		if t >= 0.05:
+			loose = minf(loose, t)
+
 	var solid := {}
 	var solid_at := REACH
 	var open := {}
 	var open_at := REACH
-	for bay in _bays:
+	for i in _bays.size():
+		var bay: Dictionary = _bays[i]
 		if _site.rack_busy(int(bay["entry"]["index"])):
 			continue
+		# anything nearer than this cabinet, other than this cabinet, is in the way
+		var limit := loose
+		for j in shell.size():
+			if j != i:
+				limit = minf(limit, shell[j])
 		var xform: Transform3D = bay["at_xform"]
 		var inv := xform.affine_inverse()
 		var from := inv * origin
@@ -135,7 +154,7 @@ func _pick() -> Dictionary:
 			var low := 0.051 + slot * U
 			var t := _enters(from, along, Vector3(-0.22, low, face - DEEP),
 				Vector3(0.22, low + U, face))
-			if t < 0.05:
+			if t < 0.05 or t > limit + 0.02:
 				continue
 			if free.has(slot):
 				if t < open_at:
@@ -145,6 +164,9 @@ func _pick() -> Dictionary:
 				solid = {"bay": bay, "xform": xform, "slot": slot}
 				solid_at = t
 
+	## An open unit is air — looking down at a rack the ray crosses every open unit
+	## above the one being aimed at, and treating those as walls meant nothing could
+	## be picked from above. A blanking panel is not air, so it still blocks.
 	if _held >= 0:
 		if open.is_empty() or open_at > solid_at:
 			return {}

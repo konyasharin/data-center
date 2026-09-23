@@ -61,6 +61,12 @@ var _hud_label: Label
 
 
 func _ready() -> void:
+	if _checking():
+		# out of the way rather than over whatever is on screen; a check that needs
+		# pixels still renders, it just does not take the desktop with it
+		DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_NO_FOCUS, true)
+		DisplayServer.window_set_position(Vector2i(40, 40))
+		DisplayServer.window_set_size(Vector2i(1280, 720))
 	_environment()
 	_wiring = Wiring.new()
 	_wiring.attach(_cabling)
@@ -147,6 +153,7 @@ func _ready() -> void:
 
 	var player := ShowroomPlayer.new()
 	player.position = Vector3(3.4, PLENUM + 0.1, 0.0)
+	player.grab_mouse = not _checking()
 	add_child(player)
 	if _laptop != null:
 		_laptop.attach_player(player)
@@ -1096,6 +1103,25 @@ func _check_racking(player: ShowroomPlayer) -> void:
 	print("rack: юнитов свободно %s, серверов %d"
 		% [bay["free"], (bay["server_tf"] as Array).size()])
 
+	# Where the mesh actually sits relative to the transform it is drawn at, and what
+	# the crosshair picks at five heights across one unit. Guessing at an off-by-one
+	# from a screenshot has cost two rounds; this settles it.
+	var box := Assets.mesh("hardware/server_1u").get_aabb()
+	print("   меш шасси: низ %.4f, верх %.4f, высота юнита %.4f"
+		% [box.position.y, box.position.y + box.size.y, U])
+	for frac in [0.1, 0.5, 0.9]:
+		await _look_at_frac(eye, bay, 2, frac)
+		print("   в упор, %d%% юнита 2: %s" % [roundi(frac * 100.0), _racking.report()])
+	# and the case that was actually wrong: standing up, looking down at a low unit
+	for slot in [1, 2, 3, 4]:
+		var face: Vector3 = bay["at"] + Vector3(0, PLINTH + slot * U + 0.001 + U * 0.5,
+			bay["face_z"])
+		eye.global_position = bay["at"] + Vector3(0, 1.65, bay["face_z"] + 0.9)
+		eye.look_at(face, Vector3.UP)
+		await get_tree().process_frame
+		await get_tree().process_frame
+		print("   сверху вниз на юнит %d: %s" % [slot, _racking.report()])
+
 	await _look_at(eye, bay, 2)
 	print("   навёлся: %s" % _racking.report())
 	print("   подсказка: %s" % _racking.hud_text())
@@ -1132,6 +1158,10 @@ func _check_racking(player: ShowroomPlayer) -> void:
 
 
 func _snap(name: String) -> void:
+	# Nothing to photograph without a renderer, and waiting for a frame that is never
+	# drawn hangs the check instead of failing it.
+	if DisplayServer.get_name() == "headless":
+		return
 	for i in 8:
 		await RenderingServer.frame_post_draw
 	var dir := "user://shots"
@@ -1160,6 +1190,15 @@ func _stock_a_cabinet(servers: int) -> void:
 		while not _estate.Advance(one, 5.0):
 			pass
 		job_done(one)
+
+
+func _look_at_frac(eye: Camera3D, bay: Dictionary, slot: int, frac: float) -> void:
+	var y: float = PLINTH + slot * U + 0.001 + U * frac
+	var face: Vector3 = bay["at"] + Vector3(0, y, bay["face_z"])
+	eye.global_position = face + Vector3(0, 0, 0.75)
+	eye.look_at(face, Vector3.UP)
+	await get_tree().process_frame
+	await get_tree().process_frame
 
 
 func _look_at(eye: Camera3D, bay: Dictionary, slot: int) -> void:
@@ -1757,6 +1796,21 @@ func _set_door(door: Dictionary, open: bool) -> void:
 	var target: float = door["shut"] - (deg_to_rad(105) if open else 0.0)
 	var tween := create_tween()
 	tween.tween_property(node, "rotation:y", target, 0.45).set_trans(Tween.TRANS_CUBIC)
+
+
+func reading_screen() -> bool:
+	return _laptop != null and _laptop.is_open()
+
+
+static func _checking() -> bool:
+	## Any of the automated checks. They drive the game with synthesised input, so the
+	## window must not take the pointer away from whoever is actually using the
+	## machine, and it must not sit on top of what they are doing.
+	for flag in ["--shop", "--rack", "--relay", "--crowd", "--pair", "--laptop",
+			"--order", "--pattern", "--fitpattern", "--crewshot", "--shots"]:
+		if flag in OS.get_cmdline_user_args():
+			return true
+	return false
 
 
 func _crosshair(layer: CanvasLayer) -> void:

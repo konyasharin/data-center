@@ -15,6 +15,10 @@ const STAND_H := 1.75
 const CROUCH_H := 1.05
 
 @export var flying := false
+## Off for the automated checks. They drive the game with synthesised key events and
+## do not need the pointer, and grabbing it locks the desktop out from under whoever
+## is using the machine — the taskbar stops answering the mouse until the run ends.
+@export var grab_mouse := true
 ## Set while the player is using something in the world — at the laptop, the keys and
 ## the mouse belong to that screen and not to walking around.
 var frozen := false
@@ -45,7 +49,8 @@ func _ready() -> void:
 	# the view and the game would open looking at a desk.
 	_camera.make_current()
 
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	if grab_mouse:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
 func eye() -> Camera3D:

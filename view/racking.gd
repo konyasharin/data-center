@@ -17,6 +17,8 @@ const SLIDE := 0.55          # seconds a unit takes to come out or go in
 const OUT := 0.62            # how far a chassis is drawn before it is free
 const HELD := Vector3(0.30, -0.26, -0.62)   # where it rides, in camera space
 const U := 0.04445
+const DEEP := 0.75           # how far back a chassis runs from the cabinet face
+const TOP_U := 35            # the highest unit a server can take; 36+ is panels
 const EDGE := Color(0.98, 0.78, 0.22)
 const EDGE_TAKE := Color(0.40, 0.86, 0.58)
 
@@ -83,7 +85,9 @@ func _process(_delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if _busy or Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+	# Not gated on the pointer being captured: the checks run without grabbing it, and
+	# the one thing that really must not answer X is a player sitting at the laptop.
+	if _busy or _site.reading_screen():
 		return
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
@@ -101,10 +105,12 @@ func _unhandled_input(event: InputEvent) -> void:
 func _pick() -> Dictionary:
 	## The unit the crosshair is on: a free one to fill, or a chassis to pull. Only one
 	## of the two is offered at a time, because only one of them can be done.
-	## The nearest cabinet the crosshair touches, and then that cabinet only. Taking
-	## the nearest cabinet that happens to hold a takeable chassis instead means a
-	## blanking panel is see-through: you look at it and a server in the rack behind
-	## lights up.
+	## The first unit the crosshair actually enters, as a box and not as a height on a
+	## plane. A plane gives the right answer only for a level ray: looking down at a
+	## rack from standing height, the chassis face is eighty millimetres further along
+	## than the cabinet face, and eighty millimetres of depth at that angle is most of
+	## a unit — so the unit under the crosshair and the unit the plane named were not
+	## the same one.
 	var origin := _eye.global_position
 	var dir := -_eye.global_transform.basis.z
 	var front := {}
@@ -116,19 +122,37 @@ func _pick() -> Dictionary:
 		var inv := xform.affine_inverse()
 		var from := inv * origin
 		var along := inv.basis * dir
-		if absf(along.z) < 0.001:
-			continue
-		var t := (float(bay["face_z"]) - from.z) / along.z
-		if t <= 0.05 or t >= front_at:
-			continue
-		var hit := from + along * t
-		if absf(hit.x) > 0.26 or hit.y < 0.05 or hit.y > 0.05 + 41.0 * U:
-			continue
-		front = {"bay": bay, "xform": xform, "slot": floori((hit.y - 0.051) / U)}
-		front_at = t
+		var face: float = bay["face_z"]
+		for slot in range(1, TOP_U + 1):
+			var low := 0.051 + slot * U
+			var t := _enters(from, along, Vector3(-0.22, low, face - DEEP),
+				Vector3(0.22, low + U, face))
+			if t < 0.05 or t >= front_at:
+				continue
+			front = {"bay": bay, "xform": xform, "slot": slot}
+			front_at = t
 	if front.is_empty():
 		return {}
 	return _unit(front["bay"], front["slot"], front["xform"])
+
+
+func _enters(from: Vector3, along: Vector3, low: Vector3, high: Vector3) -> float:
+	## Slab test: where the ray goes into the box, or -1. Written out rather than given
+	## an Area3D, for the same reason the rack has no colliders at all.
+	var near := -INF
+	var far := INF
+	for axis in 3:
+		if absf(along[axis]) < 1e-6:
+			if from[axis] < low[axis] or from[axis] > high[axis]:
+				return -1.0
+			continue
+		var a := (low[axis] - from[axis]) / along[axis]
+		var b := (high[axis] - from[axis]) / along[axis]
+		near = maxf(near, minf(a, b))
+		far = minf(far, maxf(a, b))
+	if far < maxf(near, 0.0):
+		return -1.0
+	return near
 
 
 func _unit(bay: Dictionary, slot: int, xform: Transform3D) -> Dictionary:

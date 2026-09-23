@@ -137,7 +137,50 @@ def drive_bays_emission(name="dc_drive_bays_emit"):
 	return _write(_new_image(name, 64, 96), px)
 
 
+def fence_mesh(name="dc_fence_mesh", cells=10, wire=0.12, base=0.30):
+	"""Chain-link: a diagonal lattice, mostly holes. Wire modelled as geometry is tens
+	of thousands of triangles that read as grey haze at any distance you ever see a
+	fence from."""
+	def px(u, v):
+		a = (u * cells + v * cells) % 1.0 - 0.5
+		b = (u * cells - v * cells) % 1.0 - 0.5
+		d = min(abs(a), abs(b))
+		if d > wire:
+			return (0.0, 0.0, 0.0, 0.0)
+		shade = base * (1.35 - d / wire * 0.5)
+		return (shade, shade, shade * 1.05, 1.0)
+
+	return _write(_new_image(name), px)
+
+
+def windows(name="dc_windows", across=6, down=3, base=0.30):
+	"""A band of windows for a building shell: dark glass in a light frame, with a few
+	lit. Never seen closer than across a street, so a pattern is a facade."""
+	import random
+
+	rng = random.Random(7)
+	lit = {(x, y) for x in range(across) for y in range(down)
+	       if rng.random() < 0.10}
+
+	def px(u, v):
+		cx, cy = int(u * across), int(v * down)
+		fu = (u * across) % 1.0
+		fv = (v * down) % 1.0
+		if fu < 0.14 or fu > 0.86 or fv < 0.18 or fv > 0.82:
+			return (base, base, base * 1.02, 1.0)
+		if (cx, cy) in lit:
+			return (0.50, 0.45, 0.33, 1.0)
+		# flat, cool glass: anything with colour in it turns into speckle at the size
+		# these are ever seen, which is a band of noise rather than a row of windows
+		glass = 0.11 + 0.02 * fv
+		return (glass, glass * 1.04, glass * 1.12, 1.0)
+
+	return _write(_new_image(name), px)
+
+
 BUILDERS = {
+	"dc_fence_mesh": fence_mesh,
+	"dc_windows": windows,
 	"dc_drive_bays": drive_bays,
 	"dc_drive_bays_emit": drive_bays_emission,
 	"dc_perforation": perforation,
@@ -190,7 +233,7 @@ def build_material(name, alpha=None, roughness=0.55, metallic=0.7):
 	return mat
 
 
-OPAQUE = {"dc_drive_bays", "dc_drive_bays_emit", "dc_panel_wear"}
+OPAQUE = {"dc_drive_bays", "dc_drive_bays_emit", "dc_panel_wear", "dc_windows"}
 EMISSIVE = {"dc_drive_bays": "dc_drive_bays_emit"}
 
 

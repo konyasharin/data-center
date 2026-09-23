@@ -28,6 +28,7 @@ var _eye: Camera3D
 var _pose: Transform3D
 var _flight: Tween
 var _open := false
+var _grabbed := false        # whether the pointer was captured before sitting down
 
 
 func setup(display: Node3D, estate: EstateBridge, site: Object) -> void:
@@ -101,6 +102,10 @@ func try_open() -> bool:
 		_seat.fov = _eye.fov
 	_seat.current = true
 	_fly_to(_pose, SEATED_FOV, Callable())
+	# Only give the pointer back on standing up if it was taken in the first place:
+	# the automated checks run without grabbing it, and re-capturing on their behalf
+	# locks the desktop.
+	_grabbed = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	if _player != null:
 		_player.frozen = true
@@ -111,7 +116,8 @@ func close() -> void:
 	if not _open:
 		return
 	_open = false
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	if _grabbed:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if _eye == null or not is_instance_valid(_eye):
 		_seat.current = false
 		if _player != null:

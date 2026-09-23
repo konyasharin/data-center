@@ -111,10 +111,17 @@ func _pick() -> Dictionary:
 	## than the cabinet face, and eighty millimetres of depth at that angle is most of
 	## a unit — so the unit under the crosshair and the unit the plane named were not
 	## the same one.
+	## Two answers at once: the first unit the ray runs into, and the first open one it
+	## passes through. An empty unit is air — looking down at a rack the ray crosses
+	## every open unit above the one being aimed at, and treating those as walls meant
+	## nothing could be picked from above at all. A blanking panel is not air, so it
+	## still blocks, which is what stops it being see-through.
 	var origin := _eye.global_position
 	var dir := -_eye.global_transform.basis.z
-	var front := {}
-	var front_at := REACH
+	var solid := {}
+	var solid_at := REACH
+	var open := {}
+	var open_at := REACH
 	for bay in _bays:
 		if _site.rack_busy(int(bay["entry"]["index"])):
 			continue
@@ -123,17 +130,28 @@ func _pick() -> Dictionary:
 		var from := inv * origin
 		var along := inv.basis * dir
 		var face: float = bay["face_z"]
+		var free: PackedInt32Array = bay["free"]
 		for slot in range(1, TOP_U + 1):
 			var low := 0.051 + slot * U
 			var t := _enters(from, along, Vector3(-0.22, low, face - DEEP),
 				Vector3(0.22, low + U, face))
-			if t < 0.05 or t >= front_at:
+			if t < 0.05:
 				continue
-			front = {"bay": bay, "xform": xform, "slot": slot}
-			front_at = t
-	if front.is_empty():
+			if free.has(slot):
+				if t < open_at:
+					open = {"bay": bay, "xform": xform, "slot": slot}
+					open_at = t
+			elif t < solid_at:
+				solid = {"bay": bay, "xform": xform, "slot": slot}
+				solid_at = t
+
+	if _held >= 0:
+		if open.is_empty() or open_at > solid_at:
+			return {}
+		return _unit(open["bay"], open["slot"], open["xform"])
+	if solid.is_empty():
 		return {}
-	return _unit(front["bay"], front["slot"], front["xform"])
+	return _unit(solid["bay"], solid["slot"], solid["xform"])
 
 
 func _enters(from: Vector3, along: Vector3, low: Vector3, high: Vector3) -> float:
@@ -320,8 +338,10 @@ func _glow(colour: Color) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = colour
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	# Depth-tested, unlike most highlights. Drawn through everything, the back edges of
-	# a 750 mm box sit low on the screen and over the units below it — which is what
-	# read as the wrong unit being picked.
+	# Drawn through everything, because everything is in the way: from the front the
+	# cabinet door, from the back the door and the cords. A depth-tested outline is
+	# invisible exactly when it is needed. Its back edges did once read as a second
+	# unit being lit, but that was the pick being wrong, not the drawing.
+	mat.no_depth_test = true
 	mat.render_priority = 8
 	return mat

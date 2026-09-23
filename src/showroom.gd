@@ -71,11 +71,15 @@ func _ready() -> void:
 	_wiring = Wiring.new()
 	_wiring.attach(_cabling)
 	add_child(_wiring)
-	_hall()
+	if _showroom():
+		_hall()
+	else:
+		_yard()
 	_shed()
 	_wiring.build()
 	_prewire()
-	_catalogue()
+	if _showroom():
+		_catalogue()
 	_navigation()
 	_shift()
 	_hud()
@@ -152,7 +156,8 @@ func _ready() -> void:
 		return
 
 	var player := ShowroomPlayer.new()
-	player.position = Vector3(3.4, PLENUM + 0.1, 0.0)
+	player.position = (Vector3(3.4, PLENUM + 0.1, 0.0) if _showroom()
+		else SHED_ORIGIN + Vector3(1.2, 0.1, -0.6))
 	player.grab_mouse = not _checking()
 	add_child(player)
 	if _laptop != null:
@@ -166,6 +171,9 @@ func _ready() -> void:
 
 	if "--rack" in OS.get_cmdline_user_args():
 		_check_racking(player)
+
+	if "--yardshots" in OS.get_cmdline_user_args():
+		_shoot_yard()
 
 
 const SHOTS := [
@@ -435,14 +443,35 @@ func _stats() -> void:
 # ----------------------------------------------------------------- lighting
 
 func _environment() -> void:
+	## Two rooms with nothing in common: a windowless hall lit only from its ceiling,
+	## and a yard under an overcast sky. The same settings cannot serve both — the
+	## hall's ambient turns the street into a dark box, and the yard's sun blows out
+	## every chassis indoors.
+	var outside := not _showroom()
 	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
+	env.background_mode = Environment.BG_SKY if outside else Environment.BG_COLOR
 	env.background_color = Color(0.02, 0.022, 0.026)
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.30, 0.36, 0.46)
-	# a hall lit only from the ceiling leaves vertical faces near-black, and every
-	# small horizontal ledge on a chassis then flares as a loose bright patch
-	env.ambient_light_energy = 0.34
+	if outside:
+		var sky := Sky.new()
+		var air := ProceduralSkyMaterial.new()
+		# high overcast: a bright but flat sky, so the yard has no hard shadows to
+		# argue with the shed's own interior lighting through the open door
+		air.sky_top_color = Color(0.42, 0.50, 0.62)
+		air.sky_horizon_color = Color(0.70, 0.73, 0.77)
+		air.ground_bottom_color = Color(0.20, 0.20, 0.21)
+		air.ground_horizon_color = Color(0.46, 0.46, 0.46)
+		air.sun_angle_max = 24.0
+		air.energy_multiplier = 1.0
+		sky.sky_material = air
+		env.sky = sky
+		env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+		env.ambient_light_energy = 1.0
+	else:
+		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+		env.ambient_light_color = Color(0.30, 0.36, 0.46)
+		# a hall lit only from the ceiling leaves vertical faces near-black, and every
+		# small horizontal ledge on a chassis then flares as a loose bright patch
+		env.ambient_light_energy = 0.34
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = 0.9
 	env.ssao_enabled = true
@@ -454,16 +483,23 @@ func _environment() -> void:
 	env.glow_bloom = 0.12
 	env.glow_hdr_threshold = 1.25
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.10, 0.11, 0.13)
-	env.fog_density = 0.004
+	if outside:
+		# haze with distance, which is most of what makes a painted skyline sit behind
+		# the fence instead of on it
+		env.fog_light_color = Color(0.62, 0.66, 0.71)
+		env.fog_density = 0.006
+	else:
+		env.fog_light_color = Color(0.10, 0.11, 0.13)
+		env.fog_density = 0.004
 
 	var world := WorldEnvironment.new()
 	world.environment = env
 	add_child(world)
 
 	var sun := DirectionalLight3D.new()
-	sun.light_energy = 0.10
-	sun.light_color = Color(0.72, 0.80, 0.95)
+	sun.light_energy = 1.05 if outside else 0.10
+	sun.light_color = (Color(1.0, 0.97, 0.92) if outside
+		else Color(0.72, 0.80, 0.95))
 	sun.rotation_degrees = Vector3(-52, 38, 0)
 	sun.shadow_enabled = true
 	add_child(sun)
@@ -770,6 +806,110 @@ func _populate(root: Node3D, index: int, entry: Dictionary, fill_override := -1)
 	}
 
 
+# ------------------------------------------------------------------------ двор
+
+## The plot the company starts on: a shed on a fenced yard, a street outside it and a
+## city that is only ever looked at. Nothing out there is walked on, entered or lit
+## from inside — the fence is what actually stops the player, and everything beyond
+## it exists to say where this is.
+
+const PLOT := Vector2(26.0, 22.0)     # fenced ground around the shed
+const FENCE_BAY := 2.4                # one panel, matching tools/blender/build_city.py
+const DROP_OFF := Vector3(6.6, 0, -4.2)   # delivery bay, relative to the shed
+
+
+func _yard() -> void:
+	var ground := _slab(Vector3(160, 0.4, 160), SHED_ORIGIN + Vector3(0, -0.2, 0),
+		Color(0.16, 0.16, 0.17))
+	ground.add_to_group(NAV_SOURCE)
+	_static_box(Vector3(160, 0.4, 160), SHED_ORIGIN + Vector3(0, -0.2, 0))
+	# the yard itself is concrete, the street beyond the fence is not
+	_slab(Vector3(PLOT.x, 0.06, PLOT.y), SHED_ORIGIN + Vector3(0, -0.02, 0),
+		Color(0.42, 0.41, 0.39)).add_to_group(NAV_SOURCE)
+
+	_fence()
+	_city()
+	_delivery()
+
+
+func _fence() -> void:
+	var half := PLOT * 0.5
+	# the gate faces the street, which is the side the trucks come from
+	for side in 4:
+		var along := side % 2 == 0
+		var span: float = PLOT.x if along else PLOT.y
+		var bays := int(ceilf(span / FENCE_BAY))
+		for i in bays:
+			if side == 0 and i in [int(bays / 2) - 1, int(bays / 2)]:
+				continue
+			var offset := -span * 0.5 + i * FENCE_BAY
+			var at := Vector3(offset, 0, -half.y) if along else Vector3(
+				-half.x if side == 1 else half.x, 0, offset)
+			var node := _place(self, "city/fence_panel", SHED_ORIGIN + at, 0.0)
+			node.rotation.y = 0.0 if along else PI * 0.5
+			if side == 2:
+				node.position = SHED_ORIGIN + Vector3(offset, 0, half.y)
+	var gate := _place(self, "city/fence_gate",
+		SHED_ORIGIN + Vector3(-1.8, 0, -half.y), 0.0)
+	gate.name = "yard_gate"
+
+
+func _city() -> void:
+	## A skyline, placed by hand rather than scattered: three blocks and a kiosk seen
+	## from one spot, and what matters is that nothing lines up into a wall and the
+	## gaps between them read as streets.
+	var blocks := [
+		["city/city_low", Vector3(-19, 0, -25), 0.0],
+		["city/city_low", Vector3(16, 0, -24), 0.1],
+		["city/city_slab", Vector3(-2, 0, -40), 0.0],
+		["city/city_tower", Vector3(-31, 0, -52), 0.3],
+		["city/city_tower", Vector3(22, 0, -58), -0.2],
+		["city/city_slab", Vector3(-52, 0, -26), PI * 0.5],
+		["city/city_slab", Vector3(44, 0, -18), PI * 0.5],
+		["city/city_low", Vector3(-34, 0, 18), PI * 0.5],
+		["city/city_tower", Vector3(-16, 0, 46), 0.2],
+		["city/city_slab", Vector3(34, 0, 26), PI * 0.5],
+		["city/city_low", Vector3(12, 0, 40), 0.0],
+	]
+	for row in blocks:
+		_place(self, row[0], SHED_ORIGIN + (row[1] as Vector3), row[2])
+	_place(self, "city/kiosk", SHED_ORIGIN + Vector3(6.0, 0, -13.5), PI)
+	# the street: a strip of darker tarmac with a painted centre line
+	_slab(Vector3(120, 0.04, 7.0), SHED_ORIGIN + Vector3(0, 0.01, -14.5),
+		Color(0.13, 0.13, 0.14))
+	for i in 24:
+		_slab(Vector3(1.6, 0.02, 0.14),
+			SHED_ORIGIN + Vector3(-46 + i * 4.0, 0.04, -14.5), Color(0.72, 0.68, 0.30))
+
+
+func _delivery() -> void:
+	## Where the lorry puts things down. Marked before anything is ever delivered,
+	## because the shop has to be able to say where a purchase lands.
+	var at := SHED_ORIGIN + DROP_OFF
+	var paint := Color(0.95, 0.72, 0.14)
+	for side in 4:
+		var along := side < 2
+		var size := Vector3(4.4, 0.02, 0.10) if along else Vector3(0.10, 0.02, 3.6)
+		var offset := Vector3(0, 0, 1.75 * (1 if side == 0 else -1)) if along \
+			else Vector3(2.15 * (1 if side == 2 else -1), 0, 0)
+		_slab(size, at + offset + Vector3(0, 0.03, 0), paint)
+	_sign(self, at + Vector3(0, 0.32, 0), "РАЗГРУЗКА")
+
+
+func _slab(size: Vector3, at: Vector3, colour: Color) -> MeshInstance3D:
+	var node := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = size
+	node.mesh = box
+	node.position = at
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = colour
+	mat.roughness = 0.95
+	node.material_override = mat
+	add_child(node)
+	return node
+
+
 # --------------------------------------------------------------------- shed
 
 func _shed() -> void:
@@ -789,8 +929,9 @@ func _shed() -> void:
 
 	var door := Assets.instance("building/shed_door")
 	door.position = Vector3(2.25, 0, -2.8)
-	door.rotation.y = deg_to_rad(-75)
 	shed.add_child(door)
+	_doors.append({"node": door, "at": SHED_ORIGIN + door.position, "shut": 0.0,
+		"open": false})
 
 
 	_place(shed, "furniture/desk", Vector3(2.0, 0, 1.2), PI * 0.5)
@@ -942,6 +1083,31 @@ func _watch_pair(job: int) -> void:
 					if spot.has("stages") else 0])
 		if _estate.JobStateOf(job) == 2:
 			break
+	get_tree().quit()
+
+
+func _shoot_yard() -> void:
+	## Four views of the map the game is actually played on. The yard is scenery from
+	## one place only — inside the fence — so it is worth looking at from there rather
+	## than from above, where any flat backdrop looks fine.
+	var camera := Camera3D.new()
+	camera.fov = 68
+	camera.far = 400
+	add_child(camera)
+	camera.make_current()
+	for shot in [
+		["yard_from_door", SHED_ORIGIN + Vector3(2.4, 1.7, -3.6),
+			SHED_ORIGIN + Vector3(-2.0, 1.2, -13.0)],
+		["yard_drop_off", SHED_ORIGIN + Vector3(2.0, 1.7, -4.0),
+			SHED_ORIGIN + Vector3(6.6, 0.6, -4.2)],
+		["yard_street", SHED_ORIGIN + Vector3(-4.0, 1.7, -9.0),
+			SHED_ORIGIN + Vector3(6.0, 2.5, -22.0)],
+		["yard_wide", SHED_ORIGIN + Vector3(-13.0, 9.0, 13.0),
+			SHED_ORIGIN + Vector3(2.0, 1.5, -8.0)],
+	]:
+		camera.global_position = shot[1]
+		camera.look_at(shot[2], Vector3.UP)
+		await _snap(shot[0])
 	get_tree().quit()
 
 
@@ -1112,6 +1278,17 @@ func _check_racking(player: ShowroomPlayer) -> void:
 	for frac in [0.1, 0.5, 0.9]:
 		await _look_at_frac(eye, bay, 2, frac)
 		print("   в упор, %d%% юнита 2: %s" % [roundi(frac * 100.0), _racking.report()])
+	# from above, looking down over the top of the cabinet at a low unit: the ray
+	# crosses every open unit on the way, and those must not count as walls
+	for slot in [1, 2, 3, 4]:
+		var high: Vector3 = bay["at"] + Vector3(0, PLINTH + slot * U + 0.001 + U * 0.5,
+			bay["face_z"])
+		eye.global_position = bay["at"] + Vector3(0, 1.70, bay["face_z"] + 0.35)
+		eye.look_at(high, Vector3.UP)
+		await get_tree().process_frame
+		await get_tree().process_frame
+		print("   в упор сверху на юнит %d: %s" % [slot, _racking.report()])
+
 	# and the case that was actually wrong: standing up, looking down at a low unit
 	for slot in [1, 2, 3, 4]:
 		var face: Vector3 = bay["at"] + Vector3(0, PLINTH + slot * U + 0.001 + U * 0.5,
@@ -1318,8 +1495,12 @@ func _navigation() -> void:
 	navmesh.geometry_source_group_name = NAV_SOURCE
 	# Only the shed: the hall is on a raised floor the crew has no business on yet,
 	# and baking it as well is seconds of startup for nothing.
-	navmesh.filter_baking_aabb = AABB(SHED_ORIGIN + Vector3(-4.0, -0.4, -3.2),
-		Vector3(8.0, 3.2, 6.4))
+	# the shed and the yard around it: the crew carries things in from the delivery
+	# bay, so the ground outside the door has to be walkable too
+	navmesh.filter_baking_aabb = (AABB(SHED_ORIGIN + Vector3(-4.0, -0.4, -3.2),
+		Vector3(8.0, 3.2, 6.4)) if _showroom()
+		else AABB(SHED_ORIGIN + Vector3(-PLOT.x * 0.5, -0.5, -PLOT.y * 0.5),
+			Vector3(PLOT.x, 4.0, PLOT.y)))
 
 	# The map rasterises paths on its own grid, and a region registered against a
 	# different one gets its edges rounded away — the seams between polygons stop
@@ -1802,15 +1983,24 @@ func reading_screen() -> bool:
 	return _laptop != null and _laptop.is_open()
 
 
-static func _checking() -> bool:
-	## Any of the automated checks. They drive the game with synthesised input, so the
-	## window must not take the pointer away from whoever is actually using the
-	## machine, and it must not sit on top of what they are doing.
-	for flag in ["--shop", "--rack", "--relay", "--crowd", "--pair", "--laptop",
-			"--order", "--pattern", "--fitpattern", "--crewshot", "--shots"]:
+static func _showroom() -> bool:
+	## The hall of sixteen cabinets and the catalogue row are a tool, not a place: the
+	## asset shots, the clash checks and the wiring pattern all read them. The map the
+	## game is played on is the yard, and it is what comes up by default.
+	for flag in ["--showroom", "--shots", "--pattern", "--fitpattern", "--learn",
+			"--clash", "--cablecheck", "--cullcheck", "--flicker", "--stats",
+			"--nodetail", "--probe", "--rainbow", "--matte"]:
 		if flag in OS.get_cmdline_user_args():
 			return true
 	return false
+
+
+static func _checking() -> bool:
+	## Any run with a flag on it is a tool run, not somebody playing. Listing the
+	## flags by name was wrong the moment a new one was added and the pointer was
+	## grabbed again — which locks the taskbar out from under whoever is at the
+	## machine. Playing the game means launching it with nothing after the `--`.
+	return not OS.get_cmdline_user_args().is_empty()
 
 
 func _crosshair(layer: CanvasLayer) -> void:

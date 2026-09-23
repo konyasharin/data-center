@@ -15,6 +15,8 @@ const MATERIALS := {
 	"dc_rail_holes": "res://assets/materials/dc_rail_holes.tres",
 	"dc_floor_grille": "res://assets/materials/dc_floor_grille.tres",
 	"dc_drive_bays": "res://assets/materials/dc_drive_bays.tres",
+	"dc_fence_mesh": "res://assets/materials/dc_fence_mesh.tres",
+	"dc_windows": "res://assets/materials/dc_windows.tres",
 	"rack_glass": "res://assets/materials/rack_glass.tres",
 	"terminal_screen": "res://assets/materials/terminal_screen.tres",
 }

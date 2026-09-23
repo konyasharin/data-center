@@ -40,7 +40,7 @@ BUDGET = {"server_1u": 1600, "rack_42u_frame": 9000, "worker": 5000, "shed_shell
 # and one-off materials for glass and the terminal screen. Anything else is a slip.
 ALLOWED_MATERIALS = {
 	"dc_atlas", "dc_perforation", "dc_rail_holes", "dc_floor_grille", "dc_drive_bays",
-	"rack_glass", "terminal_screen",
+	"dc_fence_mesh", "dc_windows", "rack_glass", "terminal_screen",
 }
 
 
@@ -93,7 +93,11 @@ def main():
 				problems.append(f"{stem}: unexpected material(s) {unknown}")
 			if mats > 3:
 				problems.append(f"{stem}: {mats} materials — that is {mats} draw calls")
-			if max(size) > 20 or max(size) < 0.01:
+			# Buildings are the one thing in the library that is bigger than a room, and
+			# the cap exists to catch a model exported in centimetres, not to say how
+			# tall a tower may be.
+			limit = 60 if root.endswith("city") else 20
+			if max(size) > limit or max(size) < 0.01:
 				problems.append(f"{stem}: implausible size {size} — unit scale is metres")
 			limit = BUDGET.get(stem)
 			if limit and tris > limit:

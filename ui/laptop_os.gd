@@ -142,8 +142,10 @@ func _process(_delta: float) -> void:
 		return
 	var running: int = _estate.JobsRunning()
 	var queued: int = _estate.JobsQueued()
+	var purse := ("∞ (тест: деньги не кончаются)" if _estate.Unlimited()
+		else money(_estate.Balance()))
 	_bar.text = "dc-01   ·   счёт: %s   ·   в работе: %d, в очереди: %d" % [
-		money(_estate.Balance()), running, queued]
+		purse, running, queued]
 
 
 static func money(amount: int) -> String:

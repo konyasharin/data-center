@@ -35,6 +35,8 @@ internal static class Program
 		MaintenanceOnFeedA();
 		BuyingChargesOnceAndRefusesWhenShort();
 		JobsAreClaimedOnceAndFinishOnce();
+		ABlockedJobDoesNotBlockTheRest();
+		CordsGoInOneAtATime();
 
 		Console.WriteLine(_failures == 0
 			? "\nsim: all checks passed"
@@ -393,6 +395,78 @@ internal static class Program
 		money.Earn(price);
 		Check("earning puts it back", money.Balance == price + 10);
 		Check("a negative opening balance throws", Throws(() => new Ledger(-1)));
+
+		Ledger free = new(0, unlimited: true);
+		Check("an unlimited ledger affords anything", free.CanAfford(9_000_000));
+		Check("and the charge goes through", free.Spend(9_000_000));
+		Check("without moving the balance", free.Balance == 0);
+		Check("but it is still counted", free.Spent == 9_000_000);
+	}
+
+	private static void ABlockedJobDoesNotBlockTheRest()
+	{
+		// A worker who cannot reach the oldest job -- somebody else is already in that
+		// aisle -- has to be able to look past it. Taking only the oldest meant one
+		// blocked cabinet stopped the whole crew.
+		JobQueue jobs = new();
+		int first = jobs.Add(JobKind.InstallServer, place: 0, slot: 1, seconds: 5f);
+		int second = jobs.Add(JobKind.InstallServer, place: 1, slot: 1, seconds: 5f);
+
+		Check("the oldest is offered first", jobs.NextQueued(0) == first);
+		Check("and the one after it is findable", jobs.NextQueued(first + 1) == second);
+		Check("a specific job can be taken", jobs.ClaimJob(second, worker: 1));
+		Check("the skipped one is still queued", jobs.StateOf(first) == JobState.Queued);
+		Check("taking it twice fails", !jobs.ClaimJob(second, worker: 0));
+		Check("nothing queued past the end", jobs.NextQueued(jobs.Count) < 0);
+		Check("and the other one is still there for whoever is free",
+			jobs.Claim(worker: 0) == first);
+	}
+
+	private static void CordsGoInOneAtATime()
+	{
+		// One cord at a time has to land exactly where the whole-rack pass puts it, or
+		// a server racked later is wired differently from its neighbours.
+		CablingState whole = new();
+		CablingState piece = new();
+		int[][] servers = new int[2][];
+		int[] pduA = new int[2];
+		int[] pduB = new int[2];
+		int[] top = new int[2];
+		CablingState[] both = { whole, piece };
+		for (int i = 0; i < 2; i++)
+		{
+			servers[i] = new int[6];
+			for (int n = 0; n < 6; n++)
+			{
+				servers[i][n] = both[i].AddDevice(DeviceKind.Server, 0, 2, 1);
+			}
+			pduA[i] = both[i].AddDevice(DeviceKind.Pdu, 0, 24, 0, Feed.A);
+			pduB[i] = both[i].AddDevice(DeviceKind.Pdu, 0, 24, 0, Feed.B);
+			top[i] = both[i].AddDevice(DeviceKind.Switch, 0, 0, 24, Feed.None, rows: 2);
+		}
+
+		RackWiring.WireRack(whole, servers[0], pduA[0], pduB[0], top[0]);
+		int[] oneA = { pduA[1] };
+		int[] oneB = { pduB[1] };
+		int[] oneTop = { top[1] };
+		for (int n = 0; n < 6; n++)
+		{
+			for (int cord = 0; cord < 3; cord++)
+			{
+				int link = RackWiring.WireServerCord(piece, servers[1], n, oneA, oneB,
+					oneTop, cord);
+				Check($"server {n} cord {cord} went in", link >= 0);
+			}
+		}
+
+		bool same = true;
+		for (int port = 0; port < whole.PortTotal; port++)
+		{
+			same = same && whole.OtherEnd(port) == piece.OtherEnd(port);
+		}
+		Check("one at a time lands where the whole rack would have put it", same);
+		Check("a fourth cord throws", Throws(() => RackWiring.WireServerCord(piece,
+			servers[1], 0, oneA, oneB, oneTop, 3)));
 	}
 
 	private static void JobsAreClaimedOnceAndFinishOnce()

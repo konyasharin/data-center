@@ -47,11 +47,13 @@ var _cabling := CablingBridge.new()
 var _estate := EstateBridge.new()
 var _laptop: Laptop
 var _crew: Crew
+var _racking: Racking
 # Racks in the shed that have room left, and the floor spots a bought cabinet stands
 # on. Both are what the shop offers and what a worker is sent to.
 var _bays: Array[Dictionary] = []
 var _spots: Array[Dictionary] = []
 var _tags := {}                     # job -> the sign standing over it while it runs
+var _doing := {}                    # job -> how far the work has physically got
 var _doors: Array[Dictionary] = []
 var _wiring: Wiring
 var _hud_label: Label
@@ -143,9 +145,15 @@ func _ready() -> void:
 	add_child(player)
 	if _laptop != null:
 		_laptop.attach_player(player)
+	_racking = Racking.new()
+	add_child(_racking)
+	_racking.setup(_wiring, _bays, player.eye())
 
 	if "--laptop" in OS.get_cmdline_user_args():
 		_check_laptop(player)
+
+	if "--rack" in OS.get_cmdline_user_args():
+		_check_racking(player)
 
 
 const SHOTS := [
@@ -666,6 +674,10 @@ func _populate(root: Node3D, index: int, entry: Dictionary, fill_override := -1)
 	var managers := _multimesh("hardware/cable_manager_1u", root)
 
 	var server_tf: Array[Transform3D] = []
+	# Which device each of those chassis is. The rack's own list is in the order
+	# devices were made and includes the 4U box, which is drawn from a different pool;
+	# picking a chassis off the screen needs the list that matches what is drawn.
+	var server_dev := PackedInt32Array()
 	var big_tf: Array[Transform3D] = []
 	var blank_tf: Array[Transform3D] = []
 	var patch_tf: Array[Transform3D] = []
@@ -716,7 +728,7 @@ func _populate(root: Node3D, index: int, entry: Dictionary, fill_override := -1)
 			continue
 		elif slot * 100 / 41 < fill * 100 / 42:
 			server_tf.append(here)
-			_wiring.add_server(entry, Vector3(0, y, face_z), U, 0.75)
+			server_dev.append(_wiring.add_server(entry, Vector3(0, y, face_z), U, 0.75))
 		else:
 			blank_tf.append(centred)
 		slot += 1
@@ -741,7 +753,7 @@ func _populate(root: Node3D, index: int, entry: Dictionary, fill_override := -1)
 	return {
 		"root": root, "entry": entry, "face_z": face_z,
 		"servers": servers, "servers_far": servers_far, "blanks": blanks,
-		"server_tf": server_tf, "blank_tf": blank_tf,
+		"server_tf": server_tf, "server_dev": server_dev, "blank_tf": blank_tf,
 		"free": PackedInt32Array(),
 	}
 
@@ -1038,6 +1050,53 @@ func _watch_bays() -> void:
 			bay["free"]])
 
 
+func _check_racking(player: ShowroomPlayer) -> void:
+	## --rack: aim at a chassis, pull it out, aim at an empty unit, put it back — with
+	## the real key and the real picking. Racking by hand touches the MultiMesh, the
+	## free-unit list and the port positions at once, and all three are silent when
+	## they disagree.
+	player.frozen = true
+	var bay: Dictionary = _bays[0]
+	var eye := player.eye()
+	print("rack: юнитов свободно %s, серверов %d"
+		% [bay["free"], (bay["server_tf"] as Array).size()])
+
+	await _look_at(eye, bay, 10)
+	print("   навёлся: %s" % _racking.report())
+	print("   подсказка: %s" % _racking.hud_text())
+	await _snap("rack_highlight")
+	await _press(KEY_X)
+	await get_tree().create_timer(Racking.SLIDE + 0.4).timeout
+	print("   вынул: %s, серверов %d, свободно %s"
+		% [_racking.report(), (bay["server_tf"] as Array).size(), bay["free"]])
+
+	await _look_at(eye, bay, 24)
+	print("   навёлся на пустой: %s" % _racking.report())
+	await _press(KEY_X)
+	await get_tree().create_timer(Racking.SLIDE + 0.4).timeout
+	print("   вставил: %s, серверов %d, свободно %s"
+		% [_racking.report(), (bay["server_tf"] as Array).size(), bay["free"]])
+	get_tree().quit()
+
+
+func _snap(name: String) -> void:
+	for i in 8:
+		await RenderingServer.frame_post_draw
+	var dir := "user://shots"
+	DirAccess.make_dir_recursive_absolute(dir)
+	get_viewport().get_texture().get_image().save_png("%s/%s.png" % [dir, name])
+	print("shot: ", ProjectSettings.globalize_path(dir), "/", name, ".png")
+
+
+func _look_at(eye: Camera3D, bay: Dictionary, slot: int) -> void:
+	var y: float = PLINTH + slot * U + 0.001 + U * 0.5
+	var face: Vector3 = bay["at"] + Vector3(0, y, bay["face_z"])
+	eye.global_position = face + Vector3(0, 0, 0.75)
+	eye.look_at(face, Vector3.UP)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+
 func _check_laptop(player: ShowroomPlayer) -> void:
 	## --laptop: sit down and get up again through the real input path. Getting stuck
 	## at a screen is the worst bug a diegetic interface can have — the player cannot
@@ -1056,15 +1115,19 @@ func _check_laptop(player: ShowroomPlayer) -> void:
 		% [numbers[0], numbers[1], Laptop.REACH, Laptop.AIM])
 	print("laptop: в руках %s" % _laptop.prompt())
 	print("laptop: сел %s" % _laptop.try_open())
+	await get_tree().create_timer(Laptop.FLY + 0.2).timeout
 	_report_laptop(player, "после E")
 	await _press(KEY_ESCAPE)
+	await get_tree().create_timer(Laptop.FLY + 0.2).timeout
 	_report_laptop(player, "после Esc")
 
 	# E is the other way out, and it goes through a different handler: the scene's,
 	# which offers the key to the laptop before it opens a rack door
 	await _press(KEY_E)
+	await get_tree().create_timer(Laptop.FLY + 0.2).timeout
 	_report_laptop(player, "сел по E")
 	await _press(KEY_E)
+	await get_tree().create_timer(Laptop.FLY + 0.2).timeout
 	_report_laptop(player, "встал по E")
 	get_tree().quit()
 
@@ -1238,6 +1301,7 @@ func _open_bay(bay: Dictionary, at: Vector3) -> void:
 	## cabinet: hardware is racked upwards from the bottom, and offering a hole in the
 	## middle of a filled rack is offering to make it look wrong.
 	bay["at"] = at
+	bay["at_xform"] = Transform3D(Basis(), at)
 	var top := 0
 	for tf in bay["server_tf"]:
 		top = maxi(top, int(roundf((tf.origin.y - PLINTH - 0.001) / U)))
@@ -1339,19 +1403,48 @@ func job_prop(job: int) -> String:
 	return "" if _estate.JobKindOf(job) == 1 else "props/cable_coil"
 
 
-func job_sound(job: int) -> String:
-	return "" if _estate.JobKindOf(job) == 1 else "plug_in"
+func job_sound(_job: int) -> String:
+	return ""
 
 
-func job_beat(job: int) -> float:
-	## One per cycle of the clip, which for patching is one cord going in. A cabinet
-	## makes its noise when a part appears instead, so it has no beat.
-	return 0.0 if _estate.JobKindOf(job) == 1 else 4.5
+func job_beat(_job: int) -> float:
+	## Nothing is on a timer any more: a cabinet makes its noise when a part appears and
+	## a server when a cord goes in, so both are heard at the moment they happen.
+	return 0.0
+
+
+# What the work has produced so far, per job. A technician racks the box, then plugs
+# one cord at a time — three of them, and the coil in their hand is whichever one is
+# going in. All of it appearing at once was the whole job happening on the last frame.
+const BOX_IN := 0.20
+const CORD_AT := [0.40, 0.60, 0.80]
 
 
 func job_tick(job: int, _before: float, after: float) -> void:
 	if _estate.JobKindOf(job) == 1:
 		_show_rack(_estate.JobPlaceOf(job), after)
+		return
+
+	var step: Dictionary = _doing.get(job, {"device": -1, "cords": 0})
+	var place: int = _estate.JobPlaceOf(job)
+	var bay: Dictionary = _bays[place]
+	var at := job_site(job)
+	if step["device"] < 0 and after >= BOX_IN:
+		step["device"] = _rack_server(place, _estate.JobSlotOf(job))
+		_crew.say(at + Vector3(0, 0.8, 0), "rack_part", -6.0)
+	if step["device"] >= 0:
+		for cord in CORD_AT.size():
+			if int(step["cords"]) > cord or after < CORD_AT[cord]:
+				continue
+			var link: int = _wiring.wire_cord(bay["entry"], step["device"], cord)
+			step["cords"] = cord + 1
+			if link >= 0:
+				_crew.hold_colour(job, _wiring.link_colour(link))
+				_crew.say(at + Vector3(0, 1.0, 0), "plug_in", -8.0)
+				if "--order" in OS.get_cmdline_user_args():
+					print("   работа %d: шнур %d воткнут на %d%%, цвет %s"
+						% [job, cord, roundi(after * 100.0), _wiring.link_colour(link)])
+	_doing[job] = step
 
 
 func job_started(job: int) -> void:
@@ -1372,7 +1465,10 @@ func job_done(job: int) -> void:
 	if _estate.JobKindOf(job) == 1:
 		_raise_rack(place)
 	else:
-		_rack_server(place, _estate.JobSlotOf(job))
+		# whatever the ticks have not got to yet — a job finished early, or one long
+		# tick that crossed every threshold at once
+		job_tick(job, 0.0, 1.0)
+		_doing.erase(job)
 	_wiring.grew()
 	if _tags.has(job):
 		_tags[job].queue_free()
@@ -1381,7 +1477,8 @@ func job_done(job: int) -> void:
 		_watch_bays()
 
 
-func _rack_server(place: int, slot: int) -> void:
+func _rack_server(place: int, slot: int) -> int:
+	## The box goes in. Its cords follow one at a time, so this does not patch it.
 	var bay: Dictionary = _bays[place]
 	var y := PLINTH + slot * U + 0.001
 	var at := Vector3(0, y, bay["face_z"])
@@ -1391,8 +1488,11 @@ func _rack_server(place: int, slot: int) -> void:
 	# add_server appends, so the rack's server list stays in height order only while
 	# the free units are the ones above the last box — which is what _open_bay hands out
 	var device: int = _wiring.add_server(bay["entry"], at, U, 0.75)
+	var devices: PackedInt32Array = bay["server_dev"]
+	devices.append(device)
+	bay["server_dev"] = devices
 	_wiring.grew()
-	_wiring.wire_server(bay["entry"], device)
+	return device
 
 
 func _start_rack(place: int) -> void:
@@ -1615,6 +1715,11 @@ func _process(_delta: float) -> void:
 		+ "\n" + _wiring.hud_text())
 	# The laptop takes the screen over while it is open, so its line replaces the
 	# patching one rather than sitting under it
+	if _racking != null:
+		var racking := _racking.hud_text()
+		if not racking.is_empty():
+			text += "
+" + racking
 	var at_desk: String = _laptop.prompt() if _laptop != null else ""
 	if _laptop != null and _laptop.is_open():
 		text = at_desk

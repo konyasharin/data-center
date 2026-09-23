@@ -80,12 +80,42 @@ public sealed class JobQueue
 	/// made-up score now would be a rule to unpick later.</summary>
 	public int Claim(int worker)
 	{
-		for (int job = 0; job < _count; job++)
+		return ClaimJob(NextQueued(0), worker) ? NextClaimed(worker) : -1;
+	}
+
+	/// <summary>The next unclaimed job at or after <paramref name="from"/>, or -1.
+	/// Taking the oldest is only right while every job can be done: a worker who cannot
+	/// get to the oldest one — somebody else is standing in that aisle — has to be able
+	/// to look past it instead of waiting for it.</summary>
+	public int NextQueued(int from)
+	{
+		for (int job = Math.Max(0, from); job < _count; job++)
 		{
 			if (_state[job] == JobState.Queued)
 			{
-				_state[job] = JobState.Claimed;
-				_claim[job] = worker;
+				return job;
+			}
+		}
+		return -1;
+	}
+
+	public bool ClaimJob(int job, int worker)
+	{
+		if (job < 0 || job >= _count || _state[job] != JobState.Queued)
+		{
+			return false;
+		}
+		_state[job] = JobState.Claimed;
+		_claim[job] = worker;
+		return true;
+	}
+
+	private int NextClaimed(int worker)
+	{
+		for (int job = 0; job < _count; job++)
+		{
+			if (_state[job] == JobState.Claimed && _claim[job] == worker)
+			{
 				return job;
 			}
 		}

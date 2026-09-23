@@ -139,6 +139,15 @@ public sealed class CablingState
 	public Feed FeedOf(int device) => _feed[Device(device)];
 	public int PortCountOf(int device) => _portCount[Device(device)];
 	public int RowsOf(int device) => _portRows[Device(device)];
+
+	/// <summary>Which cabinet a device stands in, after it has been carried to another
+	/// one. The rack is the only thing about a device that is not fixed when it is
+	/// made: reach is measured between racks, so a chassis that moved and did not say
+	/// so can be patched to somewhere it cannot physically reach.</summary>
+	public void MoveDevice(int device, int rack)
+	{
+		_rack[Device(device)] = rack;
+	}
 	public LineKind LineOf(int port) => _portLine[Port(port)];
 	public int OwnerOf(int port) => _portOwner[Port(port)];
 	public bool IsFree(int port) => _portLink[Port(port)] == NoLink;

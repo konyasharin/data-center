@@ -187,20 +187,64 @@ func add_server(entry: Dictionary, at: Vector3, height: float, depth: float) -> 
 	## `at` is the chassis origin in rack space; the body runs from there toward -Z,
 	## so every socket is on the plane just behind its back face.
 	var device: int = _bridge.AddDevice(Kind.SERVER, entry["index"], 2, 1, FeedId.NONE, 1)
-	# The chassis rear itself, which is where the sockets stand: they are built out of
-	# that face, not into it.
-	var z := -depth
-	var y := height * 0.5
-	# two PSU inlets where the supplies actually are, NIC between them
-	_port(entry, device, at + Vector3(-0.142, y, z))
-	_port(entry, device, at + Vector3(0.142, y, z))
-	_port(entry, device, at + Vector3(0.0, y - 0.008, z))
+	for local in _server_sockets(at, height, depth):
+		_port(entry, device, local)
 
 	entry["servers"].append(device)
 	_servers.append(device)
-	_server_pos.append(entry["xform"] * (at + Vector3(0.0, y + 0.010, z)))
+	_server_pos.append(entry["xform"] * _server_pip(at, height, depth))
 	_server_out.append(entry["xform"].basis * Vector3(0, 0, -1))
 	return device
+
+
+func move_server(entry: Dictionary, device: int, at: Vector3, height: float,
+		depth: float) -> void:
+	## A chassis carried to another slot. Where a port is in the world is this file's
+	## business and nobody else's — the core knows only that the port exists — so a
+	## server can be pulled out and put back somewhere else without the simulation
+	## noticing anything but the cords that were pulled with it.
+	var sockets := _server_sockets(at, height, depth)
+	var xform: Transform3D = entry["xform"]
+	for i in mini(sockets.size(), _bridge.PortCountOf(device)):
+		var port: int = _bridge.PortOf(device, i)
+		_port_pos[port] = xform * sockets[i]
+		_port_out[port] = (xform.basis * Vector3(0, 0, -1)).normalized()
+		_port_rack[port] = entry["slot"]
+	var nth := Array(_servers).find(device)
+	if nth >= 0:
+		_server_pos[nth] = xform * _server_pip(at, height, depth)
+		_server_out[nth] = xform.basis * Vector3(0, 0, -1)
+	if not Array(entry["servers"]).has(device):
+		entry["servers"].append(device)
+	_bridge.MoveDevice(device, entry["index"])
+
+
+func unplug_device(device: int) -> int:
+	## Everything plugged into it, pulled. A chassis coming out of a rack takes its
+	## cords with it; leaving them hanging in the air is the one thing that cannot
+	## happen.
+	var pulled := 0
+	for i in _bridge.PortCountOf(device):
+		var link: int = _bridge.LinkOf(_bridge.PortOf(device, i))
+		if link >= 0:
+			_undress(link)
+			_bridge.Disconnect(link)
+			pulled += 1
+	return pulled
+
+
+func _server_sockets(at: Vector3, height: float, depth: float) -> Array[Vector3]:
+	# The chassis rear itself, which is where the sockets stand: they are built out of
+	# that face, not into it. Two PSU inlets where the supplies actually are, NIC
+	# between them.
+	var z := -depth
+	var y := height * 0.5
+	return [at + Vector3(-0.142, y, z), at + Vector3(0.142, y, z),
+		at + Vector3(0.0, y - 0.008, z)]
+
+
+func _server_pip(at: Vector3, height: float, depth: float) -> Vector3:
+	return at + Vector3(0.0, height * 0.5 + 0.010, -depth)
 
 
 func add_strip(entry: Dictionary, at: Vector3, feed: int, outlets := OUTLETS) -> int:
@@ -367,6 +411,31 @@ func grew() -> void:
 		add_child(node)
 		_cables.append(node)
 	refresh()
+
+
+func wire_cord(entry: Dictionary, device: int, cord: int) -> int:
+	## One cord of one server, dressed the moment it is made. Returns the link, or -1:
+	## a technician puts them in one at a time, and the scene has to be able to show
+	## that without a second set of routing rules.
+	var index: int = Array(entry["servers"]).find(device)
+	if index < 0:
+		return -1
+	var link: int = _bridge.WireServerCord(entry["servers"], index, entry["feed_a"],
+		entry["feed_b"], entry["uplinks"], cord)
+	if link < 0:
+		return -1
+	var port: int = _bridge.LinkPortA(link)
+	_dress(link, _auto_route(entry, port, _bridge.OtherEnd(port)))
+	refresh(PackedInt32Array([entry["slot"]]))
+	return link
+
+
+func link_colour(link: int) -> Color:
+	## What colour that cord came out — which is what the coil in the technician's hand
+	## has to be, because it is the coil that cord was pulled off.
+	if link < 0 or not _bridge.LinkLive(link):
+		return COLOUR["network"]
+	return _line_colour(_bridge.LinkPortA(link))
 
 
 func wire_server(entry: Dictionary, device: int) -> int:

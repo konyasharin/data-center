@@ -15,11 +15,15 @@ namespace DataCenter;
 [GlobalClass]
 public partial class EstateBridge : RefCounted
 {
-	private readonly Ledger _money = new(24000);
+	// Unlimited while there is nothing to earn: no clients, no contracts and no bills
+	// exist yet, so a real balance only decides how much of the rest of the game can be
+	// reached in a test. What was spent is still counted, and the screen says so.
+	private readonly Ledger _money = new(24000, unlimited: true);
 	private readonly JobQueue _jobs = new();
 
 	public long Balance() => _money.Balance;
 	public long Spent() => _money.Spent;
+	public bool Unlimited() => _money.Unlimited;
 
 	public int CatalogueCount() => Catalogue.Count;
 
@@ -61,6 +65,8 @@ public partial class EstateBridge : RefCounted
 	public int JobClaimOf(int job) => _jobs.ClaimOf(job);
 	public float JobProgressOf(int job) => _jobs.ProgressOf(job);
 	public int Claim(int worker) => _jobs.Claim(worker);
+	public int NextQueued(int from) => _jobs.NextQueued(from);
+	public bool ClaimJob(int job, int worker) => _jobs.ClaimJob(job, worker);
 	public void Release(int job) => _jobs.Release(job);
 	public bool Advance(int job, float seconds) => _jobs.Advance(job, seconds);
 	public int JobsQueued() => _jobs.CountIn(JobState.Queued);

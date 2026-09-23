@@ -17,7 +17,6 @@ const ARRIVED := 0.35
 const TURN := 6.0
 const CORNER := 0.25          # how close counts as reaching a corner of the path
 const REPLAN := 0.7
-const CORD := Color(0.22, 0.62, 0.30)
 
 enum State { IDLE, WALKING, WORKING }
 
@@ -30,6 +29,7 @@ var _bundle: Array[Node3D] = []    # left hand: the coil of cords being worked f
 var _tip: Array[Node3D] = []       # right hand: the end going into the socket
 var _head: Array[Node3D] = []      # only for the diagnostics below
 var _cord: Array[MeshInstance3D] = []
+var _hue := PackedColorArray()     # the colour of the cord currently being run
 var _route: Array[PackedVector3Array] = []
 var _goal := PackedVector3Array()
 var _stale := PackedFloat32Array()
@@ -63,6 +63,7 @@ func setup(estate: EstateBridge, site: Object, wiring: Wiring, posts: Array) -> 
 		_tip.append(_bone(skeleton, "RightHand"))
 		_head.append(_bone(skeleton, "Head"))
 		_cord.append(cord)
+		_hue.append(Color(0.22, 0.62, 0.30))
 		_route.append(PackedVector3Array())
 		_goal.append(at)
 		_stale.append(0.0)
@@ -92,16 +93,16 @@ func _process(delta: float) -> void:
 # ------------------------------------------------------------------ choosing
 
 func _look_for_work(i: int) -> void:
-	var job: int = _estate.Claim(i)
-	if job >= 0:
-		# One person per cabinet. Two technicians patching different servers into the
-		# same rack stand in the same half metre with their arms through each other:
-		# the work is not the constraint, the space in front of it is.
-		if _crowded(_site.job_place(job), i):
-			_estate.Release(job)
+	# Down the queue rather than the oldest job only. One person per cabinet — two
+	# technicians patching different servers into the same rack stand in the same half
+	# metre with their arms through each other — and taking only the oldest meant one
+	# blocked cabinet left the whole crew standing about.
+	var job: int = _estate.NextQueued(0)
+	while job >= 0:
+		if not _crowded(_site.job_place(job), i) and _estate.ClaimJob(job, i):
+			_take(i, job, true)
 			return
-		_take(i, job, true)
-		return
+		job = _estate.NextQueued(job + 1)
 	var helping := _needs_a_hand(i)
 	if helping >= 0:
 		_take(i, helping, false)
@@ -151,6 +152,13 @@ func _take(i: int, job: int, owns: bool) -> void:
 func _head_for(i: int, to: Vector3) -> void:
 	_goal[i] = to
 	_stale[i] = 0.0
+	# Already standing there: the next job in the same cabinet starts where the last
+	# one ended. Walking a route to where you are takes a step away and back, which
+	# reads as someone wandering off and changing their mind.
+	if _body[i].position.distance_to(to) < ARRIVED:
+		_route[i] = PackedVector3Array()
+		_arrive(i)
+		return
 	_route[i] = _path(_body[i].position, to)
 	_state[i] = State.WALKING
 	_play(i, "walk")
@@ -216,6 +224,7 @@ func _arrive(i: int) -> void:
 		prop.scale = Vector3(0.38, 0.38, 0.38)
 		prop.position = Vector3(0.0, -0.07, 0.0)
 		_wear_in(_bundle[i], prop)
+		_paint(i, _hue[i])
 	if _owns[i]:
 		_site.job_started(_job[i])
 
@@ -235,6 +244,25 @@ func _work(i: int, delta: float) -> void:
 	_site.job_tick(_job[i], before, 1.0)
 	_site.job_done(_job[i])
 	_finish(i)
+
+
+func hold_colour(job: int, colour: Color) -> void:
+	## The coil is the cord the technician is pulling from, so it is the colour of that
+	## cord. Left alone it is whatever the model was painted — one blue coil for a red
+	## power lead, which reads as the wrong prop rather than as a coil.
+	for i in _job.size():
+		if _job[i] == job:
+			_hue[i] = colour
+			_paint(i, colour)
+
+
+func _paint(i: int, colour: Color) -> void:
+	var flat := StandardMaterial3D.new()
+	flat.albedo_color = colour
+	flat.roughness = 0.6
+	for node in _walk_tree(_bundle[i]) if _bundle[i] != null else []:
+		if node is MeshInstance3D:
+			node.material_override = flat
 
 
 func _noise(i: int, delta: float) -> void:
@@ -291,7 +319,7 @@ func _draw_cord(i: int) -> void:
 	# out of the coil downwards and into the socket along the reach, which keeps the
 	# loop hanging below the hands instead of cutting through the forearms
 	_cord[i].mesh = _wiring.loose_cord(from, Vector3.DOWN, to, (to - from).normalized(),
-		CORD)
+		_hue[i])
 
 
 # ------------------------------------------------------------------- plumbing

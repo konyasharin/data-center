@@ -10,6 +10,7 @@ extends Node3D
 ## cursor drawn inside the viewport drifts away from the one the player is moving.
 
 const SCREEN := Vector2i(960, 600)
+const FLY := 0.5             # seconds the camera takes to get to the screen and back
 const REACH := 1.6           # metres you can be from the desk and still sit down
 # How far off the screen you may be looking. Generous on purpose: a laptop on a desk
 # is well below eye level, so standing right at it you are looking down at it by a
@@ -23,6 +24,8 @@ var _os: LaptopOS
 var _seat: Camera3D
 var _player: ShowroomPlayer
 var _eye: Camera3D
+var _pose: Transform3D
+var _flight: Tween
 var _open := false
 
 
@@ -90,7 +93,13 @@ func try_open() -> bool:
 	if not _within_reach():
 		return false
 	_open = true
+	# Starting from where the player's eyes are and moving in, rather than cutting.
+	# Sitting down at a desk is a movement, and a cut leaves you working out where you
+	# are looking from instead of reading the screen.
+	if _eye != null and is_instance_valid(_eye):
+		_seat.global_transform = _eye.global_transform
 	_seat.current = true
+	_fly_to(_pose, Callable())
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	if _player != null:
 		_player.frozen = true
@@ -101,12 +110,36 @@ func close() -> void:
 	if not _open:
 		return
 	_open = false
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	if _eye == null or not is_instance_valid(_eye):
+		_seat.current = false
+		if _player != null:
+			_player.frozen = false
+		return
+	# Frozen until the camera lands: walking away while the view is still pulling back
+	# out of the screen is the one thing worse than the cut it replaces.
+	_fly_to(_eye.global_transform, _stand_up)
+
+
+func _stand_up() -> void:
 	_seat.current = false
 	if _eye != null and is_instance_valid(_eye):
 		_eye.make_current()
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if _player != null:
 		_player.frozen = false
+
+
+func _fly_to(to: Transform3D, then: Callable) -> void:
+	var from := _seat.global_transform
+	if _flight != null and _flight.is_valid():
+		_flight.kill()
+	_flight = create_tween()
+	_flight.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	_flight.tween_method(
+		func(t: float) -> void: _seat.global_transform = from.interpolate_with(to, t),
+		0.0, 1.0, FLY)
+	if not then.is_null():
+		_flight.finished.connect(then)
 
 
 func show_app(id: String) -> void:
@@ -149,6 +182,9 @@ func _screen_hit(mouse: Vector2) -> Vector2:
 	## is off the panel.
 	var camera := _seat
 	var origin := camera.project_ray_origin(mouse)
+	# nothing lands on the screen while the camera is still on its way in
+	if _flight != null and _flight.is_valid():
+		return Vector2(-1, -1)
 	var dir := camera.project_ray_normal(mouse)
 	var to_panel := _panel.global_transform
 	var normal := to_panel.basis.z.normalized()
@@ -180,6 +216,7 @@ func _place_seat() -> void:
 	# keyboard; slightly above centre, which is where eyes are when you sit down.
 	_seat.global_position = centre + normal * 0.44 + Vector3.UP * 0.07
 	_seat.look_at(centre, Vector3.UP)
+	_pose = _seat.global_transform
 
 
 func reach_numbers() -> Array:

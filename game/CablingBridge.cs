@@ -33,6 +33,8 @@ public partial class CablingBridge : RefCounted
 			(Feed)feed, rows);
 	}
 
+	public void MoveDevice(int device, int rack) => _state.MoveDevice(device, rack);
+
 	public int DeviceCount() => _state.DeviceCount;
 	public int KindOf(int device) => (int)_state.KindOf(device);
 	public int RackOf(int device) => _state.RackOf(device);
@@ -140,6 +142,16 @@ public partial class CablingBridge : RefCounted
 			report.ServersWired, report.PowerLinks, report.NetworkLinks,
 			report.Mistakes, report.OutOfPorts, report.Refused,
 		};
+	}
+
+	/// <summary>One cord of one server — 0 and 1 are the inlets, 2 the network — so the
+	/// scene can show a technician plugging them in one at a time. Returns the link, or
+	/// -1.</summary>
+	public int WireServerCord(int[] servers, int index, int[] feedA, int[] feedB,
+		int[] uplinks, int cord)
+	{
+		return RackWiring.WireServerCord(_state, servers, index, feedA, feedB, uplinks,
+			cord);
 	}
 
 	/// <param name="report">wired, power, network, mistakes, out-of-ports, refused.</param>

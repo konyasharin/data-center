@@ -80,6 +80,41 @@ public static class RackWiring
 			made.Network, 0, made.Short, made.Refused);
 	}
 
+	/// <summary>One cord of one server: 0 and 1 are the two inlets, 2 is the network.
+	/// A technician plugs them in one at a time, so the scene has to be able to ask for
+	/// them one at a time — and they must land exactly where the whole-rack pass would
+	/// have put them, which is why this is the same code and not a copy of it.</summary>
+	/// <returns>The link that was made, or -1.</returns>
+	public static int WireServerCord(CablingState state, ReadOnlySpan<int> servers,
+		int index, ReadOnlySpan<int> feedA, ReadOnlySpan<int> feedB,
+		ReadOnlySpan<int> uplinks, int cord)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(index);
+		ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, servers.Length);
+		ArgumentOutOfRangeException.ThrowIfNegative(cord);
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(cord, 2);
+
+		int server = servers[index];
+		if (cord == 2)
+		{
+			bool lower = index < servers.Length / 2;
+			return Join(state, state.FindFreePort(server, LineKind.Network),
+				UplinkPort(state, uplinks, lower ? index : index - servers.Length / 2,
+					lower));
+		}
+		return Join(state, state.FindFreePort(server, LineKind.Power),
+			FreePortIn(state, cord == 0 ? feedA : feedB, LineKind.Power, index));
+	}
+
+	private static int Join(CablingState state, int a, int b)
+	{
+		if (a < 0 || b < 0)
+		{
+			return -1;
+		}
+		return state.Connect(a, b, out int link) == ConnectResult.Ok ? link : -1;
+	}
+
 	private readonly record struct ServerWiring(int Power, int Network, int Short, int Refused);
 
 	/// <param name="slipKind">-1 for a clean job; 0 leaves one inlet unplugged, 1 puts

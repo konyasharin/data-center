@@ -18,7 +18,7 @@ import bpy
 from dclib import exporter, palette, textures
 
 BUILDERS = ["build_rack", "build_shed", "build_room", "build_props", "build_worker",
-            "build_city"]
+            "build_city", "build_delivery"]
 
 
 def main():

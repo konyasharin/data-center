@@ -56,6 +56,8 @@ var _spots: Array[Dictionary] = []
 var _tags := {}                     # job -> the sign standing over it while it runs
 var _doing := {}                    # job -> how far the work has physically got
 var _obstacles: Array = []          # loose things the crosshair cannot see through
+var _delivery: Delivery
+var _deliveries := {}               # cabinet orders the lorry is carrying
 var _doors: Array[Dictionary] = []
 var _wiring: Wiring
 var _hud_label: Label
@@ -166,6 +168,9 @@ func _ready() -> void:
 	_racking = Racking.new()
 	add_child(_racking)
 	_racking.setup(_wiring, self, _bays, player.eye())
+	_delivery = Delivery.new()
+	add_child(_delivery)
+	_delivery.setup(self, player.eye(), SHED_ORIGIN + DROP_OFF)
 
 	if "--laptop" in OS.get_cmdline_user_args():
 		_check_laptop(player)
@@ -175,6 +180,9 @@ func _ready() -> void:
 
 	if "--yardshots" in OS.get_cmdline_user_args():
 		_shoot_yard()
+
+	if "--build" in OS.get_cmdline_user_args():
+		_check_build(player)
 
 
 const SHOTS := [
@@ -834,7 +842,7 @@ func _yard() -> void:
 
 	_fence()
 	_city()
-	_delivery()
+	_drop_zone()
 
 
 func _fence() -> void:
@@ -916,7 +924,7 @@ func _city() -> void:
 			SHED_ORIGIN + Vector3(-46 + i * 4.0, 0.04, -14.5), Color(0.72, 0.68, 0.30))
 
 
-func _delivery() -> void:
+func _drop_zone() -> void:
 	## Where the lorry puts things down. Marked before anything is ever delivered,
 	## because the shop has to be able to say where a purchase lands.
 	var at := SHED_ORIGIN + DROP_OFF
@@ -1114,6 +1122,47 @@ func _watch_pair(job: int) -> void:
 					if spot.has("stages") else 0])
 		if _estate.JobStateOf(job) == 2:
 			break
+	get_tree().quit()
+
+
+func _check_build(player: ShowroomPlayer) -> void:
+	## --build: buy a cabinet, wait for the lorry, open the crate and carry the seven
+	## pieces to a marked place in order. Delivery, the crate and the assembly touch
+	## the shop, the job queue, the crate and the cabinet builder at once, and every
+	## one of them is silent when it disagrees with the others.
+	player.frozen = true
+	var eye := player.eye()
+	var spots := free_spots(1)
+	print("build: мест под шкаф %d, шкафов %d" % [spots.size(), _bays.size()])
+	print("   заказан шкаф -> работа %d" % order(1, spots[0]["place"], spots[0]["slot"]))
+	while _delivery.busy() and _delivery.hud_text().begins_with("машина"):
+		await get_tree().create_timer(0.3).timeout
+	await get_tree().create_timer(1.0).timeout
+	print("   после доставки: %s" % _delivery.hud_text())
+
+	var crate := SHED_ORIGIN + DROP_OFF
+	eye.global_position = crate + Vector3(0, 1.6, -1.6)
+	eye.look_at(crate + Vector3(0, 1.1, 0), Vector3.UP)
+	await get_tree().process_frame
+	print("   у ящика: %s" % _delivery.hud_text())
+	await _press(KEY_E)
+	await get_tree().create_timer(0.7).timeout
+	print("   открыт: %s" % _delivery.hud_text())
+
+	var spot: Dictionary = _spots[0]
+	for i in Delivery.ORDER.size():
+		eye.global_position = crate + Vector3(0, 1.9, -1.2)
+		eye.look_at(crate + Vector3(0, 1.85, 0), Vector3.UP)
+		await get_tree().process_frame
+		await _press(KEY_X)
+		eye.global_position = spot["at"] + Vector3(0, 1.7, -1.4)
+		eye.look_at(spot["at"], Vector3.UP)
+		await get_tree().process_frame
+		await _press(KEY_X)
+		print("   деталь %d: собрано %d, стоек %d, %s"
+			% [i + 1, built_steps(spot), _bays.size(), _delivery.report()])
+	print("build: шкафов %d, мест под сервер %d, мест под шкаф %d"
+		% [_bays.size(), free_spots(0).size(), free_spots(1).size()])
 	get_tree().quit()
 
 
@@ -1611,7 +1660,74 @@ func solid_boxes() -> Array:
 	## Everything loose in the room that the crosshair cannot see through. Cabinets are
 	## not in here — the picker knows about those already and has to be able to reach
 	## into the one it is standing at.
-	return _obstacles
+	if _delivery == null:
+		return _obstacles
+	return _obstacles + _delivery.solid_boxes()
+
+
+# ------------------------------------------------- шкаф, который ставят руками
+
+func spot_under(origin: Vector3, dir: Vector3, reach: float) -> Dictionary:
+	## Which marked place the crosshair is on. A place is a rectangle on the floor, so
+	## it is a plane and a pair of bounds rather than anything cleverer.
+	if absf(dir.y) < 0.001:
+		return {}
+	var t := (SHED_ORIGIN.y - origin.y) / dir.y
+	if t <= 0.05 or t > reach:
+		return {}
+	var hit := origin + dir * t
+	for spot in _spots:
+		if spot["taken"]:
+			continue
+		var at: Vector3 = spot["at"]
+		if absf(hit.x - at.x) < RACK_W * 0.5 and absf(hit.z - at.z) < RACK_D * 0.5:
+			return spot
+	return {}
+
+
+func built_steps(spot: Dictionary) -> int:
+	return int(spot.get("built", 0))
+
+
+func can_build(spot: Dictionary, step: int) -> bool:
+	## The pieces go together in one order: the base, then the four uprights, then the
+	## sides. Any other order is a cabinet that cannot stand, which is the only reason
+	## the order is worth asking about at all.
+	return step == built_steps(spot)
+
+
+func build_step(spot: Dictionary, step: int, part: String) -> void:
+	var made: Array = spot.get("made", [])
+	var node := Assets.instance("delivery/%s" % part)
+	node.position = spot["at"] + _part_offset(step)
+	add_child(node)
+	made.append(node)
+	spot["made"] = made
+	spot["built"] = step + 1
+	_crew.say(spot["at"] + Vector3(0, 0.6, 0),
+		["rack_frame", "rack_rail", "rack_panel"][mini(step, 2)], -4.0)
+	if spot["built"] < Delivery.ORDER.size():
+		return
+	# the last piece: the parts come away and a cabinet stands there instead
+	for piece in made:
+		piece.queue_free()
+	spot["made"] = []
+	_start_rack(int(spot["index"]))
+	_show_rack(int(spot["index"]), 1.0)
+	_open_bay(spot["bay"], spot["at"])
+	if is_instance_valid(spot["mark"]):
+		spot["mark"].queue_free()
+	spot["taken"] = true
+
+
+func _part_offset(step: int) -> Vector3:
+	if step == 0:
+		return Vector3.ZERO
+	if step <= 4:
+		var sx := -1.0 if step % 2 == 1 else 1.0
+		var sz := -1.0 if step <= 2 else 1.0
+		return Vector3(sx * (RACK_W * 0.5 - 0.04), 0.12, sz * (RACK_D * 0.5 - 0.06))
+	return Vector3((-1.0 if step == 5 else 1.0) * (RACK_W * 0.5 - 0.01), 0.12, 0.0)
 
 
 func rack_busy(index: int) -> bool:
@@ -1656,11 +1772,17 @@ func order(item: int, place: int, slot: int) -> int:
 	var job: int = _estate.Buy(item, place, slot)
 	if job < 0:
 		return -1
-	# Held the moment it is paid for, not when the worker arrives: the shop must not
-	# offer the same shelf to two purchases while the first is still being carried in.
-	if _estate.JobKindOf(job) == 1:
-		_spots[place]["taken"] = true
-	else:
+	if _estate.JobKindOf(job) == 1 and _delivery != null:
+		# the lorry is the work; nobody claims it, and it finishes when the crate is
+		# standing on the bay
+		_estate.Claim(-1)
+		_delivery.deliver(6.0)
+		_deliveries[job] = true
+	# A shelf is held the moment it is paid for: the shop must not offer the same one
+	# to two purchases while the first is still being carried in. A place on the floor
+	# is not — a cabinet arrives in a crate and the player decides where to stand it,
+	# so the place is taken when one is standing on it.
+	if _estate.JobKindOf(job) != 1:
 		var free: PackedInt32Array = _bays[place]["free"]
 		var at := free.find(slot)
 		if at >= 0:
@@ -1701,7 +1823,10 @@ func job_place(job: int) -> int:
 
 
 func job_crew(job: int) -> int:
-	return 2 if _estate.JobKindOf(job) == 1 else 1
+	## Zero means the crew does not take it at all. A cabinet is delivered on a lorry
+	## and stood up by the player out of a crate — that is the work of the phase, and
+	## handing it to somebody in a hi-vis is handing away the thing being built.
+	return 0 if _estate.JobKindOf(job) == 1 else 1
 
 
 func job_clip(job: int) -> String:
@@ -2087,11 +2212,18 @@ func _process(_delta: float) -> void:
 		+ "\n" + _wiring.hud_text())
 	# The laptop takes the screen over while it is open, so its line replaces the
 	# patching one rather than sitting under it
+	if _delivery != null:
+		for job in _deliveries.keys():
+			if _estate.JobStateOf(job) == 1 and not _delivery.busy():
+				_estate.Advance(job, 1000.0)
+				_deliveries.erase(job)
+		var carrying := _delivery.hud_text()
+		if not carrying.is_empty():
+			text += "\n" + carrying
 	if _racking != null:
 		var racking := _racking.hud_text()
 		if not racking.is_empty():
-			text += "
-" + racking
+			text += "\n" + racking
 	var at_desk: String = _laptop.prompt() if _laptop != null else ""
 	if _laptop != null and _laptop.is_open():
 		text = at_desk

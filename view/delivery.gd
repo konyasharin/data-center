@@ -25,18 +25,17 @@ const BACK_IN := 4.5         # and reversing through it
 const GATE_SLIDE := 3.0      # an electric gate is slow, and that is what reads as one
 const REACH := 2.6
 const CARRY := Vector3(0.34, -0.40, -0.72)
-# Where each piece sits in the crate and how big it is to point at. A part is not a
-# cube and they are not a stack: the base lies flat on the bottom, the uprights stand
-# in the corners and the sides lean against the walls, which is how a flat-packed
-# cabinet actually travels — and it is what makes each one its own thing to aim at.
+# Where each piece stands in the crate: the base flat on the bottom, the uprights in
+# the corners, the sides against the walls — which is how a flat-packed cabinet
+# actually travels, and what makes each piece its own thing to aim at. How big each
+# one is comes from its mesh, not from numbers written here: a box typed out by hand
+# is a box that is wrong the first time a model changes, and it was already half a
+# metre too big in every direction.
 const PART_SLOT := [
-	[Vector3(0.0, 0.22, 0.0), Vector3(0.30, 0.09, 0.52)],
-	[Vector3(-0.26, 1.10, -0.46), Vector3(0.08, 1.00, 0.08)],
-	[Vector3(0.26, 1.10, -0.46), Vector3(0.08, 1.00, 0.08)],
-	[Vector3(-0.26, 1.10, 0.46), Vector3(0.08, 1.00, 0.08)],
-	[Vector3(0.26, 1.10, 0.46), Vector3(0.08, 1.00, 0.08)],
-	[Vector3(-0.36, 1.05, 0.0), Vector3(0.06, 0.95, 0.50)],
-	[Vector3(0.36, 1.05, 0.0), Vector3(0.06, 0.95, 0.50)],
+	Vector3(0.0, 0.0, 0.0),
+	Vector3(-0.26, 0.10, -0.46), Vector3(0.26, 0.10, -0.46),
+	Vector3(-0.26, 0.10, 0.46), Vector3(0.26, 0.10, 0.46),
+	Vector3(-0.36, 0.10, 0.0), Vector3(0.36, 0.10, 0.0),
 ]
 
 var _site: Object
@@ -76,7 +75,8 @@ func report() -> String:
 
 func hud_text() -> String:
 	if _taken >= 0:
-		return "в руках %s · наведитесь на размеченное место, X — поставить" % _name(_taken)
+		return ("в руках %s · X — поставить на размеченное место, V — бросить"
+			% _name(_taken))
 	if _aimed >= 0:
 		return "X — взять %s" % _name(_parts[_aimed]["kind"])
 	if _crate != null and _aiming_at_crate():
@@ -105,6 +105,13 @@ func deliver(_seconds: float) -> void:
 	_pose(start, -PI * 0.5)
 	_message = "машина в пути"
 
+	# Lined up on the far side of the road and then reversed straight in. The turn
+	# happens entirely on the road, because a lorry swinging round while its tail is
+	# already inside the gate is a lorry going through the fence — which is what the
+	# single curve did.
+	var lined := Vector3(_gate_x, 0, _street - 2.4)
+	var backed := Vector3(_gate_x, 0, _at.z - 3.4)
+
 	var run := create_tween()
 	# in fast and slowing to a stop, which is most of what makes it read as driving
 	run.tween_method(func(t: float) -> void: _pose(start.lerp(halt, t), -PI * 0.5),
@@ -113,17 +120,19 @@ func deliver(_seconds: float) -> void:
 		_message = "ворота открываются"
 		_site.slide_gate(true))
 	run.tween_interval(GATE_SLIDE)
-	# backing in: the tail swings through the gate while the cab comes round, which is
-	# one curve and a turn rather than a lorry sliding sideways
-	run.tween_method(func(t: float) -> void: _back_in(halt, t),
+	run.tween_method(func(t: float) -> void: _line_up(halt, lined, t),
+		0.0, 1.0, BACK_IN * 0.8).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	run.tween_method(func(t: float) -> void: _pose(lined.lerp(backed, t), 0.0),
 		0.0, 1.0, BACK_IN).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	run.tween_callback(func() -> void:
 		_drop_crate()
 		_message = "разгрузка")
 	run.tween_interval(2.5)
-	run.tween_method(func(t: float) -> void: _back_in(halt, 1.0 - t),
-		0.0, 1.0, BACK_IN * 0.8).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	run.tween_method(func(t: float) -> void: _pose(backed.lerp(lined, t), 0.0),
+		0.0, 1.0, BACK_IN).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	run.tween_callback(func() -> void: _site.slide_gate(false))
+	run.tween_method(func(t: float) -> void: _line_up(halt, lined, 1.0 - t),
+		0.0, 1.0, BACK_IN * 0.8).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	run.tween_method(func(t: float) -> void:
 		_pose(halt.lerp(Vector3(_gate_x + 80.0, 0, _street), t), -PI * 0.5),
 		0.0, 1.0, APPROACH * 0.7).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
@@ -134,15 +143,13 @@ func deliver(_seconds: float) -> void:
 		_message = "ящик на площадке: E — открыть")
 
 
-func _back_in(halt: Vector3, t: float) -> void:
-	## A quadratic curve from the street to the bay with its corner out in the road:
-	## the tail goes in first and the cab follows round, which is what reversing
-	## through a gate looks like.
-	var tail := Vector3(_gate_x, 0, _at.z - 1.4)
-	var bend := Vector3(_gate_x + 7.0, 0, _street + 0.5)
+func _line_up(halt: Vector3, lined: Vector3, t: float) -> void:
+	## Swinging the tail round onto the gate's axis, on the road and nowhere near the
+	## fence. One quadratic, with its corner where the lorry would actually pivot.
+	var bend := Vector3(_gate_x + 7.0, 0, _street - 3.0)
 	var a := halt.lerp(bend, t)
-	var b := bend.lerp(tail, t)
-	_pose(a.lerp(b, t), lerp_angle(-PI * 0.5, 0.0, clampf(t * 1.25, 0.0, 1.0)))
+	var b := bend.lerp(lined, t)
+	_pose(a.lerp(b, t), lerp_angle(-PI * 0.5, 0.0, clampf(t * 1.2, 0.0, 1.0)))
 
 
 func _pose(at: Vector3, yaw: float) -> void:
@@ -167,30 +174,45 @@ func _drop_crate() -> void:
 		var part := Assets.instance("delivery/%s" % ORDER[i])
 		part.visible = false
 		add_child(part)
-		_parts.append({"node": part, "kind": i})
+		_parts.append({"node": part, "kind": i, "loose": null})
 	_stack()
 
 
 func _stack() -> void:
+	## The pieces are in the crate from the moment it is set down, not conjured when it
+	## is opened: a crate whose contents appear on opening is a box with a spawn in it.
+	## What the closed front does is stop you reaching them, which is what a front does.
 	for piece in _parts:
+		if piece["loose"] != null:
+			continue
 		var part: Node3D = piece["node"]
-		part.visible = _open
-		part.global_position = _part_at(piece["kind"]) - Vector3(0, _sits(piece["kind"]), 0)
+		part.visible = true
+		part.global_position = _part_stand(piece["kind"])
 		part.rotation = Vector3(0, 0, 0)
 
 
-func _sits(kind: int) -> float:
-	## Models stand on their own origin; the slot is the middle of the piece, so it is
-	## dropped by half its height to land on the crate floor.
-	return (PART_SLOT[kind][1] as Vector3).y
+func _part_stand(kind: int) -> Vector3:
+	## Where the piece's own origin goes, which is what the model is placed at.
+	return _at + Vector3(0, 0.14, 0) + PART_SLOT[mini(kind, PART_SLOT.size() - 1)]
 
 
-func _part_at(i: int) -> Vector3:
-	return _at + (PART_SLOT[mini(i, PART_SLOT.size() - 1)][0] as Vector3)
+func _part_at(kind: int) -> Vector3:
+	## The middle of the piece as it stands, which is what the crosshair aims at. A
+	## piece that has been thrown down is wherever it came to rest instead.
+	for piece in _parts:
+		if piece["kind"] == kind and piece["loose"] != null:
+			return (piece["loose"] as Node3D).global_position + part_box(kind).get_center()
+	return _part_stand(kind) + part_box(kind).get_center()
 
 
-func _part_half(i: int) -> Vector3:
-	return PART_SLOT[mini(i, PART_SLOT.size() - 1)][1]
+func _part_half(kind: int) -> Vector3:
+	return part_box(kind).size * 0.5
+
+
+static func part_box(kind: int) -> AABB:
+	## The piece's own bounds, straight off its mesh.
+	var mesh := Assets.mesh("delivery/%s" % ORDER[mini(kind, ORDER.size() - 1)])
+	return mesh.get_aabb() if mesh != null else AABB(Vector3.ZERO, Vector3.ONE * 0.2)
 
 
 func part_aim() -> Vector3:
@@ -226,8 +248,11 @@ func _clear_crate() -> void:
 # ------------------------------------------------------------------- pointing
 
 func _process(_delta: float) -> void:
+	if _taken >= 0:
+		_show_target()
+		return
 	_aimed = _pick_part()
-	if _aimed < 0 or _taken >= 0:
+	if _aimed < 0:
 		_outline.visible = false
 		return
 	var kind: int = _parts[_aimed]["kind"]
@@ -235,16 +260,35 @@ func _process(_delta: float) -> void:
 		_part_at(kind)), Outline.COOL)
 
 
+func _show_target() -> void:
+	## Where the piece in your hands would go. Carrying something to a place and being
+	## told no only once you press the key is a guessing game; the outline is the
+	## answer given before the question.
+	var spot: Dictionary = _site.spot_under(_eye.global_position,
+		-_eye.global_transform.basis.z, REACH * 2.0)
+	if spot.is_empty():
+		_outline.visible = false
+		return
+	var bounds := part_box(_taken)
+	var at: Vector3 = _site.part_place(spot, _taken) + bounds.get_center()
+	_outline.show_at(Transform3D(Basis().scaled(bounds.size), at),
+		Outline.COOL if _site.can_build(spot, _taken) else Outline.WARM)
+
+
 func _pick_part() -> int:
 	## The part the crosshair is actually on, as a box. A cone aimed at the middle of
 	## the crate meant hunting for the one spot the game agreed was a part.
-	if not _open or _parts.is_empty() or _eye == null or not is_instance_valid(_eye):
+	if _parts.is_empty() or _eye == null or not is_instance_valid(_eye) or _taken >= 0:
 		return -1
 	var origin := _eye.global_position
 	var dir := -_eye.global_transform.basis.z
 	var best := -1
 	var best_at := REACH
 	for i in _parts.size():
+		# what is still in the crate can only be reached once it is open; what is lying
+		# on the ground is lying on the ground
+		if _parts[i]["loose"] == null and not _open:
+			continue
 		var kind: int = _parts[i]["kind"]
 		var half := _part_half(kind)
 		var t := _enters(origin - _part_at(kind), dir, -half, half)
@@ -296,10 +340,16 @@ func _unhandled_input(event: InputEvent) -> void:
 			_place_part()
 		elif _aimed >= 0:
 			_take_part(_aimed)
+	elif event.keycode == KEY_V and _taken >= 0:
+		_throw()
 
 
 func _take_part(index: int) -> void:
 	_taken = _parts[index]["kind"]
+	var loose = _parts[index]["loose"]
+	if loose != null and is_instance_valid(loose):
+		loose.queue_free()
+	_parts[index]["loose"] = null
 	(_parts[index]["node"] as Node3D).visible = false
 	_carried = Assets.instance("delivery/%s" % ORDER[_taken])
 	_carried.position = CARRY
@@ -323,14 +373,44 @@ func _place_part() -> void:
 			(_parts[i]["node"] as Node3D).queue_free()
 			_parts.remove_at(i)
 			break
-	_taken = -1
-	if _carried != null and is_instance_valid(_carried):
-		_carried.queue_free()
-	_carried = null
+	_hands_free()
 	_message = ""
 	_stack()
 	if _parts.is_empty():
 		_clear_crate()
+
+
+func _throw() -> void:
+	## Out of the hands and onto the ground, as a body that falls. Something carried
+	## that can only be installed or carried forever is not a thing you are holding,
+	## it is a state you are in.
+	var kind := _taken
+	var body := RigidBody3D.new()
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	var bounds := part_box(kind)
+	box.size = bounds.size
+	shape.shape = box
+	shape.position = bounds.get_center()
+	body.add_child(shape)
+	body.add_child(Assets.instance("delivery/%s" % ORDER[kind]))
+	body.mass = 14.0
+	add_child(body)
+	body.global_position = _eye.global_position + _eye.global_transform.basis * CARRY
+	body.apply_central_impulse(-_eye.global_transform.basis.z * 26.0 + Vector3.UP * 5.0)
+
+	for i in _parts.size():
+		if _parts[i]["kind"] == kind:
+			_parts[i]["loose"] = body
+	_hands_free()
+	_message = "положили на землю"
+
+
+func _hands_free() -> void:
+	_taken = -1
+	if _carried != null and is_instance_valid(_carried):
+		_carried.queue_free()
+	_carried = null
 
 
 func _name(index: int) -> String:

@@ -1705,21 +1705,43 @@ func solid_boxes() -> Array:
 # ------------------------------------------------- шкаф, который ставят руками
 
 func spot_under(origin: Vector3, dir: Vector3, reach: float) -> Dictionary:
-	## Which marked place the crosshair is on. A place is a rectangle on the floor, so
-	## it is a plane and a pair of bounds rather than anything cleverer.
-	if absf(dir.y) < 0.001:
-		return {}
-	var t := (SHED_ORIGIN.y - origin.y) / dir.y
-	if t <= 0.05 or t > reach:
-		return {}
-	var hit := origin + dir * t
+	## Which marked place the crosshair is on. The place is the whole volume a cabinet
+	## will occupy, not the rectangle painted on the floor: once the base and a couple
+	## of uprights are standing there, aiming at what you are building points at the
+	## air above the paint, and the answer was no.
+	var best := {}
+	var best_at := reach
 	for spot in _spots:
 		if spot["taken"]:
 			continue
 		var at: Vector3 = spot["at"]
-		if absf(hit.x - at.x) < RACK_W * 0.5 and absf(hit.z - at.z) < RACK_D * 0.5:
-			return spot
-	return {}
+		var t := _enters_box(origin - at - Vector3(0, RACK_H * 0.5, 0), dir,
+			Vector3(RACK_W * 0.5, RACK_H * 0.5, RACK_D * 0.5))
+		if t >= 0.05 and t < best_at:
+			best_at = t
+			best = spot
+	return best
+
+
+func _enters_box(from: Vector3, along: Vector3, half: Vector3) -> float:
+	var near := -INF
+	var far := INF
+	for axis in 3:
+		if absf(along[axis]) < 1e-6:
+			if absf(from[axis]) > half[axis]:
+				return -1.0
+			continue
+		var a := (-half[axis] - from[axis]) / along[axis]
+		var b := (half[axis] - from[axis]) / along[axis]
+		near = maxf(near, minf(a, b))
+		far = minf(far, maxf(a, b))
+	if far < maxf(near, 0.0):
+		return -1.0
+	return near
+
+
+func part_place(spot: Dictionary, step: int) -> Vector3:
+	return spot["at"] + _part_offset(step)
 
 
 func built_steps(spot: Dictionary) -> int:

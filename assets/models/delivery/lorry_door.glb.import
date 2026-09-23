@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://cwwj3yu6id3xh"
-path="res://.godot/imported/crate_body.glb-4c28fc6df510f737aecc874b0b42dd95.scn"
+uid="uid://eyg8l1ee2jxn"
+path="res://.godot/imported/lorry_door.glb-43aa7f5bc04b39aac42c51906f91ae35.scn"
 
 [deps]
 
-source_file="res://assets/models/delivery/crate_body.glb"
-dest_files=["res://.godot/imported/crate_body.glb-4c28fc6df510f737aecc874b0b42dd95.scn"]
+source_file="res://assets/models/delivery/lorry_door.glb"
+dest_files=["res://.godot/imported/lorry_door.glb-43aa7f5bc04b39aac42c51906f91ae35.scn"]
 
 [params]
 

@@ -1176,9 +1176,9 @@ func _film_delivery() -> void:
 		[9.5, "run_03_at_gate", gate + Vector3(11, 2.2, 5.0), gate + Vector3(0, 1.4, -1.0)],
 		[15.5, "run_04_lining_up", gate + Vector3(12, 3.4, 6.0), gate + Vector3(2, 1.2, -2.0)],
 		[19.5, "run_05_backing", gate + Vector3(9, 2.6, 7.0), gate + Vector3(-1, 1.6, 2.0)],
-		[24.0, "run_06_at_bay", bay + Vector3(5.5, 2.4, 2.0), bay + Vector3(0, 1.2, 0)],
-		[28.0, "run_07_crate", bay + Vector3(0.2, 1.7, -2.4), bay + Vector3(0, 1.1, 0)],
-		[36.0, "run_08_gone", bay + Vector3(4.0, 2.0, -3.0), bay + Vector3(0, 1.0, 0)],
+		[22.0, "run_06_at_bay", bay + Vector3(6.0, 2.6, 2.5), bay + Vector3(0, 1.2, 0)],
+		[26.0, "run_07_doors", bay + Vector3(0.1, 1.7, 3.4), bay + Vector3(0, 1.3, 0)],
+		[30.0, "run_08_load", bay + Vector3(0.1, 1.6, 2.4), bay + Vector3(0, 1.2, 0)],
 	]:
 		await _wait_until(shot[0])
 		camera.global_position = shot[2]
@@ -1187,11 +1187,9 @@ func _film_delivery() -> void:
 		await _snap(shot[1])
 
 	# and the crate open, with the pieces in it
-	_delivery.open_crate(true)
-	await get_tree().create_timer(1.2).timeout
-	camera.global_position = bay + Vector3(0.1, 1.55, -2.1)
-	camera.look_at(bay + Vector3(0, 0.9, 0), Vector3.UP)
-	await _snap("run_09_open")
+	camera.global_position = bay + Vector3(1.6, 1.6, 2.2)
+	camera.look_at(bay + Vector3(0, 1.1, 0), Vector3.UP)
+	await _snap("run_09_inside")
 	get_tree().quit()
 
 
@@ -1216,19 +1214,11 @@ func _check_build(player: ShowroomPlayer) -> void:
 	print("build: мест под шкаф %d, шкафов %d" % [spots.size(), _bays.size()])
 	print("   заказан шкаф -> работа %d" % order(1, spots[0]["place"], spots[0]["slot"]))
 	var waited := 0.0
-	while not _delivery.has_crate() and waited < 40.0:
+	while not _delivery.has_crate() and waited < 45.0:
 		await get_tree().create_timer(0.3).timeout
 		waited += 0.3
-	print("   ящик на площадке через %.1f с: %s" % [waited, _delivery.hud_text()])
-
-	var crate := SHED_ORIGIN + DROP_OFF
-	eye.global_position = crate + Vector3(0, 1.6, -1.6)
-	eye.look_at(crate + Vector3(0, 1.1, 0), Vector3.UP)
-	await get_tree().process_frame
-	print("   у ящика: %s" % _delivery.hud_text())
-	await _press(KEY_E)
-	await get_tree().create_timer(0.7).timeout
-	print("   открыт: %s" % _delivery.hud_text())
+	await get_tree().create_timer(Delivery.DOOR_SWING + 0.3).timeout
+	print("   машина у площадки через %.1f с: %s" % [waited, _delivery.report()])
 
 	var spot: Dictionary = _spots[0]
 	for i in Delivery.ORDER.size():

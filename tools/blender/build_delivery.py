@@ -12,6 +12,7 @@ in the order a real one goes together, which is the only order that works.
 Run: blender -b --factory-startup --python tools/blender/build_delivery.py
 """
 
+import math
 import os
 import sys
 
@@ -23,74 +24,36 @@ from dclib import exporter
 from dclib.meshkit import Builder, clear_scene
 from dclib.units import MM
 
-CRATE_W = 0.86
-CRATE_D = 1.32
-CRATE_H = 2.14
-PLANK = 22 * MM
 
 
-def _planked(b, size, at, mat="wood", gap=0.10):
-	"""A face made of boards with a shadow line between them, which is what tells a
-	crate from a painted box at any distance."""
-	w, h = size
-	rows = max(2, int(h / gap))
-	step = h / rows
-	for i in range(rows):
-		b.box((w, PLANK, step * 0.88), (at[0], at[1], at[2] - h / 2 + step * (i + 0.5)),
-		      mat, bevel=2 * MM)
-
-
-def make_crate_body():
-	"""Origin on the floor at the middle of the crate; the lid hinges at its back."""
-	b = Builder()
-	for sx in (-1, 1):
-		b.box((PLANK * 2, CRATE_D, CRATE_H), (sx * (CRATE_W / 2 - PLANK), 0, CRATE_H / 2),
-		      "wood", bevel=3 * MM)
-	# back only: the front is a separate panel, because a crate is opened from the
-	# front and a lid on top is opened by somebody standing on a ladder
-	_planked(b, (CRATE_W - PLANK * 2, CRATE_H), (0, CRATE_D / 2 - PLANK, CRATE_H / 2))
-	b.box((CRATE_W + 0.04, PLANK * 2, 90 * MM), (0, 0, CRATE_H - 0.045), "wood",
-	      bevel=3 * MM)
-	# the pallet it stands on, and the corner braces
-	b.box((CRATE_W + 0.06, CRATE_D + 0.06, 0.14), (0, 0, 0.07), "wood", bevel=4 * MM)
-	for sx in (-1, 1):
-		for sy in (-1, 1):
-			b.box((60 * MM, 60 * MM, CRATE_H), (sx * (CRATE_W / 2 - 30 * MM),
-			      sy * (CRATE_D / 2 - 30 * MM), CRATE_H / 2), "wood", bevel=3 * MM)
-	return b.finish("crate_body")
-
-
-def make_crate_lid():
-	"""The front panel. Origin on its left edge, on the floor, so the door swings about
-	a vertical hinge and nothing else in the crate moves with it."""
-	b = Builder()
-	w = CRATE_W - PLANK * 2
-	rows = int(CRATE_H / 0.12)
-	step = CRATE_H / rows
-	for i in range(rows):
-		b.box((w, PLANK, step * 0.88), (w / 2, 0, step * (i + 0.5)), "wood", bevel=2 * MM)
-	for z in (0.16, CRATE_H - 0.16):
-		b.box((w, PLANK * 1.6, 70 * MM), (w / 2, -PLANK * 0.4, z), "wood", bevel=2 * MM)
-	b.box((60 * MM, 40 * MM, 0.16), (w - 70 * MM, -PLANK * 1.2, CRATE_H * 0.5),
-	      "steel_dark", bevel=3 * MM)
-	b.box((0.34, 4 * MM, 0.22), (w / 2, -PLANK * 0.8, CRATE_H * 0.66), "label",
-	      bevel=1 * MM)
-	return b.finish("crate_lid")
+BODY_L = 4.2
+BODY_W = 2.3
+BODY_H = 2.3
+BED = 0.64          # top of the bed above the ground: chassis clearance plus its deck
 
 
 def make_lorry():
-	"""A flatbed with a box body. Never driven and never entered — it stops at the
-	gate, the crate comes off the back, and it leaves again."""
+	"""A box lorry, open at the back and hollow, because the load is taken out of it by
+	hand. The rear door is its own object so it can be swung up on its top edge.
+
+	Never driven: it slides along a path and the wheels do not turn. At the speed it
+	moves and the distance it is seen from, what reads as driving is the easing."""
 	b = Builder()
-	w, wheel, clear = 2.3, 0.44, 0.42
+	w, wheel, clear = BODY_W, 0.44, 0.42
 	# chassis and bed
 	b.box((w, 6.6, 0.22), (0, 0, clear + 0.11), "steel_dark", bevel=8 * MM)
-	# box body
-	body_l = 4.2
-	b.box((w, body_l, 2.3), (0, -0.9, clear + 0.22 + 1.15), "plastic_white", bevel=12 * MM,
-	      mat_faces={"-Y": "plastic_grey"})
-	b.box((w + 0.06, 0.10, 2.34), (0, -0.9 - body_l / 2, clear + 0.22 + 1.15),
-	      "steel_light", bevel=8 * MM)
+	# the body as walls round an empty space: floor, roof, two sides and the front
+	body_l = BODY_L
+	back = -0.9 - body_l / 2
+	b.box((w, body_l, 60 * MM), (0, -0.9, BED), "plastic_grey", bevel=6 * MM)
+	b.box((w, body_l, 80 * MM), (0, -0.9, BED + BODY_H), "plastic_white", bevel=8 * MM)
+	for sx in (-1, 1):
+		b.box((70 * MM, body_l, BODY_H), (sx * (w / 2 - 35 * MM), -0.9,
+		      BED + BODY_H / 2), "plastic_white", bevel=8 * MM)
+	b.box((w, 80 * MM, BODY_H), (0, -0.9 + body_l / 2, BED + BODY_H / 2),
+	      "plastic_white", bevel=8 * MM)
+	b.box((w + 0.06, 0.10, 0.12), (0, back, BED + BODY_H + 0.02), "steel_light",
+	      bevel=6 * MM)
 	# cab
 	b.box((w - 0.1, 2.0, 1.9), (0, 2.5, clear + 0.22 + 0.95), "paint_blue", bevel=20 * MM)
 	b.box((w - 0.4, 0.12, 0.8), (0, 2.5 + 1.0, clear + 0.22 + 1.45), "glass", bevel=8 * MM)
@@ -106,6 +69,25 @@ def make_lorry():
 			b.cyl(wheel, 0.30, (sx * (w / 2 - 0.12), sy, wheel), "rubber", sides=16,
 			      rot=(0, 90, 0))
 	return b.finish("lorry")
+
+
+def make_lorry_door():
+	"""The rear door, hinged along its top edge so it swings up and out of the way.
+	Origin on that hinge, in the lorry's own space, so Godot parents it to the lorry
+	and turns one number."""
+	b = Builder()
+	b.box((BODY_W + 0.04, 60 * MM, 0.10), (0, 0, 0), "steel_light", bevel=5 * MM)
+	rows = 7
+	step = BODY_H / rows
+	for i in range(rows):
+		b.box((BODY_W - 0.02, 40 * MM, step * 0.9), (0, 0, -step * (i + 0.5)),
+		      "plastic_white", bevel=4 * MM)
+	for sx in (-1, 1):
+		b.box((60 * MM, 60 * MM, BODY_H), (sx * (BODY_W / 2 - 60 * MM), -20 * MM,
+		      -BODY_H / 2), "plastic_grey", bevel=4 * MM)
+	b.box((0.26, 80 * MM, 90 * MM), (0, -40 * MM, -BODY_H + 0.35), "steel_dark",
+	      bevel=5 * MM)
+	return b.finish("lorry_door")
 
 
 def part(name, build):
@@ -148,19 +130,16 @@ def main():
 	exporter.setup_studio()
 	build = exporter.Build()
 
-	body = build.emit(make_crate_body(), "delivery")
-	lid = build.emit(make_crate_lid(), "delivery")
 	lorry = build.emit(make_lorry(), "delivery")
+	door = build.emit(make_lorry_door(), "delivery")
 	parts = [build.emit(p, "delivery") for p in make_parts()]
 
 	build.report()
 
-	lid.location = (-(CRATE_W - PLANK * 2) / 2, -CRATE_D / 2 + PLANK, 0)
-	exporter.contact_sheet([body, lid],
-	                       os.path.join(exporter.PREVIEWS, "crate.png"),
-	                       views=(("front", 3.0, 10), ("three_q", 2.6, 26)))
-	exporter.render_preview([lorry], os.path.join(exporter.PREVIEWS, "lorry.png"),
-	                        angle=62, elevation=18, resolution=(1200, 620))
+	door.location = (0, -0.9 - BODY_L / 2, BED + BODY_H)
+	door.rotation_euler = (math.radians(-70), 0, 0)
+	exporter.contact_sheet([lorry, door], os.path.join(exporter.PREVIEWS, "lorry.png"),
+	                       views=(("rear", 9.0, 14), ("three_q", 8.0, 24)))
 	x = 0.0
 	for obj in parts:
 		obj.location = (x, 0, 0)

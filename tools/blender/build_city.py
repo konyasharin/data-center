@@ -39,21 +39,38 @@ def make_fence_panel():
 	return b.finish("fence_panel")
 
 
+GATE_W = 4.2
+
+
 def make_fence_gate():
-	"""A wider bay with a sliding leaf, shut. The plot is closed; this says why."""
+	"""The frame only: two posts, the rail the leaf hangs from and the motor box. The
+	leaf is its own object because it slides — Godot moves one node and the posts stay
+	where they are."""
 	b = Builder()
-	width = 3.6
-	for x in (0.0, width):
-		b.box((90 * MM, 90 * MM, FENCE_H + 0.2), (x, 0, (FENCE_H + 0.2) / 2),
+	for x in (0.0, GATE_W):
+		b.box((100 * MM, 100 * MM, FENCE_H + 0.25), (x, 0, (FENCE_H + 0.25) / 2),
 		      "steel_dark", bevel=4 * MM)
-	b.box((width, 50 * MM, 80 * MM), (width / 2, 0, FENCE_H - 0.06), "steel", bevel=3 * MM)
-	b.box((width, 50 * MM, 60 * MM), (width / 2, 0, 0.10), "steel", bevel=3 * MM)
-	b.detail((width - 0.1, FENCE_H - 0.26), (width / 2, 0, FENCE_H / 2 + 0.01),
-	         texture="dc_fence_mesh", tile=0.30, plane="XZ", double_sided=True)
-	for x in (width * 0.34, width * 0.66):
-		b.box((60 * MM, 40 * MM, FENCE_H - 0.26), (x, 0, FENCE_H / 2 + 0.01), "steel",
-		      bevel=2 * MM)
+	# the track the leaf runs along, and the drive at the far post
+	b.box((GATE_W + 0.9, 70 * MM, 60 * MM), (GATE_W / 2 + 0.45, 0, 0.06), "steel_dark",
+	      bevel=3 * MM)
+	b.box((0.34, 0.26, 0.42), (GATE_W + 0.30, 0, 0.30), "plastic_grey", bevel=6 * MM)
+	b.box((0.12, 0.10, 0.10), (GATE_W + 0.30, -0.16, 0.46), "led_amber", bevel=2 * MM)
 	return b.finish("fence_gate")
+
+
+def make_gate_leaf():
+	"""The sliding leaf, origin at its left edge so shut is 0 and open is its width."""
+	b = Builder()
+	h = FENCE_H
+	b.box((GATE_W, 60 * MM, 90 * MM), (GATE_W / 2, 0, h - 0.05), "steel", bevel=3 * MM)
+	b.box((GATE_W, 60 * MM, 90 * MM), (GATE_W / 2, 0, 0.05), "steel", bevel=3 * MM)
+	for x in (40 * MM, GATE_W / 2, GATE_W - 40 * MM):
+		b.box((70 * MM, 50 * MM, h - 0.1), (x, 0, h / 2), "steel", bevel=3 * MM)
+	b.detail((GATE_W - 0.16, h - 0.22), (GATE_W / 2, 0, h / 2),
+	         texture="dc_fence_mesh", tile=0.30, plane="XZ", double_sided=True)
+	for x in (GATE_W * 0.22, GATE_W * 0.78):
+		b.box((0.16, 0.05, 0.16), (x, -0.04, h * 0.56), "paint_yellow", bevel=2 * MM)
+	return b.finish("gate_leaf")
 
 
 def block(name, size, floors, base="wall_panel", crown=None):
@@ -108,6 +125,7 @@ def main():
 
 	panel = emit(make_fence_panel())
 	gate = emit(make_fence_gate())
+	emit(make_gate_leaf())
 	tower = emit(block("city_tower", (9.0, 9.0, 26.0), 8))
 	slab = emit(block("city_slab", (16.0, 11.0, 14.0), 5, base="wall_panel_dark"))
 	low = emit(block("city_low", (12.0, 9.0, 7.0), 2, base="concrete"))

@@ -58,6 +58,8 @@ var _doing := {}                    # job -> how far the work has physically got
 var _obstacles: Array = []          # loose things the crosshair cannot see through
 var _delivery: Delivery
 var _deliveries := {}               # cabinet orders the lorry is carrying
+var _gate_leaf: Node3D
+var _gate_shut := Vector3.ZERO
 var _doors: Array[Dictionary] = []
 var _wiring: Wiring
 var _hud_label: Label
@@ -170,7 +172,8 @@ func _ready() -> void:
 	_racking.setup(_wiring, self, _bays, player.eye())
 	_delivery = Delivery.new()
 	add_child(_delivery)
-	_delivery.setup(self, player.eye(), SHED_ORIGIN + DROP_OFF)
+	_delivery.setup(self, player.eye(), SHED_ORIGIN + DROP_OFF,
+		SHED_ORIGIN.z + STREET_Z)
 
 	if "--laptop" in OS.get_cmdline_user_args():
 		_check_laptop(player)
@@ -825,11 +828,16 @@ func _populate(root: Node3D, index: int, entry: Dictionary, fill_override := -1)
 const PLOT := Vector2(30.0, 26.0)     # fenced ground around the shed
 const FENCE_BAY := 2.4                # one panel, matching tools/blender/build_city.py
 const CITY_PLOT := 26.0               # spacing of the blocks beyond the fence
-const DROP_OFF := Vector3(6.6, 0, -4.2)   # delivery bay, relative to the shed
+# Straight in from the gate: a lorry reverses through a gate in a line, and a bay
+# off to one side would need it to turn inside the yard, which it has no room to do.
+const DROP_OFF := Vector3(0.0, 0, -8.0)
+const STREET_Z := -14.5
 
 
 func _yard() -> void:
-	var ground := _slab(Vector3(160, 0.4, 160), SHED_ORIGIN + Vector3(0, -0.2, 0),
+	# a couple of centimetres under the shed floor, not flush with it: two coplanar
+	# surfaces is z-fighting by construction
+	var ground := _slab(Vector3(160, 0.4, 160), SHED_ORIGIN + Vector3(0, -0.22, 0),
 		Color(0.16, 0.16, 0.17))
 	ground.add_to_group(NAV_SOURCE)
 	_static_box(Vector3(160, 0.4, 160), SHED_ORIGIN + Vector3(0, -0.2, 0))
@@ -861,17 +869,26 @@ func _fence() -> void:
 	for run in runs:
 		var start: Vector3 = run[0]
 		var yaw: float = run[1]
-		var step := Vector3(cos(yaw), 0, -sin(yaw)) * FENCE_BAY
-		var bays := int(ceilf(float(run[2]) / FENCE_BAY))
+		var span: float = run[2]
+		# The bay count is rounded and the spacing divided back out, so a run ends on
+		# its corner. Rounding up and stepping by the nominal bay ran every side past
+		# the corner by most of a panel.
+		var bays := maxi(1, int(roundf(span / FENCE_BAY)))
 		var gap := int(bays / 2) - 1 if run[3] else -1
+		var step := Vector3(cos(yaw), 0, -sin(yaw)) * (span / bays)
 		for i in bays:
 			if run[3] and (i == gap or i == gap + 1):
 				continue
-			_place(self, "city/fence_panel", SHED_ORIGIN + start + step * i, yaw)
+			var node := _place(self, "city/fence_panel",
+				SHED_ORIGIN + start + step * i, yaw)
+			node.scale.x = (span / bays) / FENCE_BAY
 		if run[3]:
 			var gate := _place(self, "city/fence_gate",
 				SHED_ORIGIN + start + step * gap, yaw)
 			gate.name = "yard_gate"
+			_gate_leaf = _place(self, "city/gate_leaf",
+				SHED_ORIGIN + start + step * gap, yaw)
+			_gate_shut = _gate_leaf.position
 	# the corner posts of adjoining runs meet; a solid block under each one hides the
 	# seam and gives the fence something to stand on
 	for corner in [Vector3(-half.x, 0, -half.y), Vector3(half.x, 0, -half.y),
@@ -899,7 +916,7 @@ func _city() -> void:
 			# and there so the blocks do not read as a wall
 			if absf(at.x) < PLOT.x * 0.5 + 12.0 and absf(at.z) < PLOT.y * 0.5 + 12.0:
 				continue
-			if absf(at.z + 14.5) < 9.0:
+			if absf(at.z - STREET_Z) < 9.0:
 				continue
 			if rng.randf() < 0.18:
 				continue
@@ -917,11 +934,12 @@ func _city() -> void:
 	print("город: %d домов" % placed)
 	_place(self, "city/kiosk", SHED_ORIGIN + Vector3(6.0, 0, -13.5), PI)
 	# the street: a strip of darker tarmac with a painted centre line
-	_slab(Vector3(120, 0.04, 7.0), SHED_ORIGIN + Vector3(0, 0.01, -14.5),
+	_slab(Vector3(160, 0.04, 7.0), SHED_ORIGIN + Vector3(0, 0.01, STREET_Z),
 		Color(0.13, 0.13, 0.14))
-	for i in 24:
+	for i in 34:
 		_slab(Vector3(1.6, 0.02, 0.14),
-			SHED_ORIGIN + Vector3(-46 + i * 4.0, 0.04, -14.5), Color(0.72, 0.68, 0.30))
+			SHED_ORIGIN + Vector3(-66 + i * 4.0, 0.04, STREET_Z),
+			Color(0.72, 0.68, 0.30))
 
 
 func _drop_zone() -> void:
@@ -1135,10 +1153,11 @@ func _check_build(player: ShowroomPlayer) -> void:
 	var spots := free_spots(1)
 	print("build: мест под шкаф %d, шкафов %d" % [spots.size(), _bays.size()])
 	print("   заказан шкаф -> работа %d" % order(1, spots[0]["place"], spots[0]["slot"]))
-	while _delivery.busy() and _delivery.hud_text().begins_with("машина"):
+	var waited := 0.0
+	while not _delivery.has_crate() and waited < 40.0:
 		await get_tree().create_timer(0.3).timeout
-	await get_tree().create_timer(1.0).timeout
-	print("   после доставки: %s" % _delivery.hud_text())
+		waited += 0.3
+	print("   ящик на площадке через %.1f с: %s" % [waited, _delivery.hud_text()])
 
 	var crate := SHED_ORIGIN + DROP_OFF
 	eye.global_position = crate + Vector3(0, 1.6, -1.6)
@@ -1151,9 +1170,11 @@ func _check_build(player: ShowroomPlayer) -> void:
 
 	var spot: Dictionary = _spots[0]
 	for i in Delivery.ORDER.size():
-		eye.global_position = crate + Vector3(0, 1.9, -1.2)
-		eye.look_at(crate + Vector3(0, 1.85, 0), Vector3.UP)
+		var aim: Vector3 = _delivery.part_aim()
+		eye.global_position = aim + Vector3(0, 0.25, -1.5)
+		eye.look_at(aim, Vector3.UP)
 		await get_tree().process_frame
+		print("      прицел на детали %d: %s" % [i + 1, _delivery.report()])
 		await _press(KEY_X)
 		eye.global_position = spot["at"] + Vector3(0, 1.7, -1.4)
 		eye.look_at(spot["at"], Vector3.UP)
@@ -1654,6 +1675,22 @@ func _open_bay(bay: Dictionary, at: Vector3) -> void:
 	if not free.is_empty():
 		_sign(bay["root"], Vector3(0, PLINTH + (free[0] + free.size() * 0.5) * U,
 			RACK_FRONT_Z + 0.06), "%dU СВОБОДНО" % free.size())
+
+
+func slide_gate(open: bool) -> void:
+	## An electric gate: a leaf that runs sideways along its rail, slowly, and stops
+	## with a clunk. It is one node moving, which is the whole reason the leaf is a
+	## separate model from the posts it hangs between.
+	if _gate_leaf == null:
+		return
+	var to := _gate_shut + (_gate_leaf.global_transform.basis.x * -4.4 if open
+		else Vector3.ZERO)
+	var slide := create_tween()
+	slide.tween_property(_gate_leaf, "position", to, Delivery.GATE_SLIDE * 0.9) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	slide.tween_callback(func() -> void:
+		if _crew != null:
+			_crew.say(_gate_leaf.global_position + Vector3(0, 1.0, 0), "rack_rail", -6.0))
 
 
 func solid_boxes() -> Array:

@@ -3,14 +3,15 @@ extends Node3D
 
 ## What happens between paying for a cabinet and standing one up.
 ##
-## A lorry comes in off the street, stops at the bay, and a crate is left there. The
-## crate is opened by hand, and what is inside is the cabinet in pieces: a base, four
-## uprights, two sides. The player carries them to a marked place one at a time, in
-## the order they go together, and the cabinet grows as they arrive.
+## A lorry comes down the street, slows, stops level with the gate; the gate slides
+## open; the lorry reverses through it to the bay, the crate comes off the back, and
+## it pulls out again. The crate is opened from the front by hand, and what is inside
+## is the cabinet in pieces. The player carries them to a marked place one at a time,
+## in the order they go together, and the cabinet grows there.
 ##
-## Nothing here is a job in the queue. The crew does work the player delegates; this
-## is the work the player does, and the difference is the whole reason the crate is
-## opened by hand rather than by somebody in a hi-vis.
+## Nothing here is a job in the queue. The crew does the work the player delegates;
+## this is the work the player does, and the difference is the whole reason the crate
+## is opened by hand rather than by somebody in a hi-vis.
 
 const ORDER := ["rack_part_base", "rack_part_upright", "rack_part_upright",
 	"rack_part_upright", "rack_part_upright", "rack_part_side", "rack_part_side"]
@@ -19,107 +20,268 @@ const NAMED := {
 	"rack_part_upright": "стойка-профиль",
 	"rack_part_side": "боковина",
 }
-const DRIVE_IN := 7.0        # seconds the lorry takes to arrive and leave again
+const APPROACH := 6.0        # seconds from the far end of the street to the gate
+const BACK_IN := 4.5         # and reversing through it
+const GATE_SLIDE := 3.0      # an electric gate is slow, and that is what reads as one
 const REACH := 2.6
-const LID_OPEN := -100.0
-const CARRY := Vector3(0.36, -0.42, -0.78)
+const CARRY := Vector3(0.34, -0.40, -0.72)
+# Where each piece sits in the crate and how big it is to point at. A part is not a
+# cube and they are not a stack: the base lies flat on the bottom, the uprights stand
+# in the corners and the sides lean against the walls, which is how a flat-packed
+# cabinet actually travels — and it is what makes each one its own thing to aim at.
+const PART_SLOT := [
+	[Vector3(0.0, 0.22, 0.0), Vector3(0.30, 0.09, 0.52)],
+	[Vector3(-0.26, 1.10, -0.46), Vector3(0.08, 1.00, 0.08)],
+	[Vector3(0.26, 1.10, -0.46), Vector3(0.08, 1.00, 0.08)],
+	[Vector3(-0.26, 1.10, 0.46), Vector3(0.08, 1.00, 0.08)],
+	[Vector3(0.26, 1.10, 0.46), Vector3(0.08, 1.00, 0.08)],
+	[Vector3(-0.36, 1.05, 0.0), Vector3(0.06, 0.95, 0.50)],
+	[Vector3(0.36, 1.05, 0.0), Vector3(0.06, 0.95, 0.50)],
+]
 
 var _site: Object
 var _eye: Camera3D
 var _lorry: Node3D
 var _crate: Node3D
-var _lid: Node3D
-var _parts: Array[Node3D] = []       # what is still in the crate, in reverse order
-var _taken := -1                     # index of the part in the player's hands
+var _door: Node3D
+var _outline: Outline
+# Each piece keeps the slot it was packed in, because pieces leave the crate and the
+# ones left behind must not shuffle along to fill the gap — a crate whose contents
+# rearrange themselves every time something is taken out is not a crate.
+var _parts: Array[Dictionary] = []
+var _taken := -1
 var _carried: Node3D
 var _open := false
-var _at := Vector3.ZERO
+var _at := Vector3.ZERO              # the bay
+var _street := 0.0                   # z of the road outside the gate
+var _gate_x := 0.0
+var _aimed := -1                     # part under the crosshair, or -1
 var _message := ""
 
 
-func setup(site: Object, eye: Camera3D, bay: Vector3) -> void:
+func setup(site: Object, eye: Camera3D, bay: Vector3, street: float) -> void:
 	_site = site
 	_eye = eye
 	_at = bay
+	_street = street
+	_gate_x = bay.x
+	_outline = Outline.make(Outline.COOL)
+	add_child(_outline)
 
 
 func report() -> String:
-	return "ящик %s, деталей %d, в руках %d, сообщение «%s»" % [
-		_crate != null, _parts.size(), _taken, _message]
+	return "ящик %s, открыт %s, деталей %d, в руках %d, под прицелом %d" % [
+		_crate != null, _open, _parts.size(), _taken, _aimed]
 
 
 func hud_text() -> String:
 	if _taken >= 0:
 		return "в руках %s · наведитесь на размеченное место, X — поставить" % _name(_taken)
+	if _aimed >= 0:
+		return "X — взять %s" % _name(_parts[_aimed]["kind"])
 	if _crate != null and _aiming_at_crate():
 		return "E — %s ящик" % ("закрыть" if _open else "открыть")
-	if _open and not _parts.is_empty() and _aiming_at_crate(true):
-		return "X — взять %s" % _name(_parts.size() - 1)
 	return _message
+
+
+func has_crate() -> bool:
+	return _crate != null
 
 
 func busy() -> bool:
 	return _crate != null or _lorry != null or _taken >= 0
 
 
-func deliver(seconds: float) -> void:
-	## A lorry in off the street. It is never driven — it slides along the road, stops
-	## at the bay for as long as unloading takes, and slides off again.
+# ------------------------------------------------------------------ the lorry
+
+func deliver(_seconds: float) -> void:
 	if _lorry != null:
 		return
 	_lorry = Assets.instance("delivery/lorry")
 	add_child(_lorry)
-	var road := _at + Vector3(0, 0, -9.0)
-	var away := road + Vector3(46, 0, 0)
-	_lorry.rotation.y = PI * 0.5
-	_lorry.global_position = road - Vector3(46, 0, 0)
+	# the model faces along -Z, so heading east down the street is a quarter turn
+	var start := Vector3(_gate_x - 70.0, 0, _street)
+	var halt := Vector3(_gate_x + 9.0, 0, _street)
+	_pose(start, -PI * 0.5)
 	_message = "машина в пути"
 
 	var run := create_tween()
-	run.tween_property(_lorry, "global_position", road, DRIVE_IN * 0.45) \
-		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	# in fast and slowing to a stop, which is most of what makes it read as driving
+	run.tween_method(func(t: float) -> void: _pose(start.lerp(halt, t), -PI * 0.5),
+		0.0, 1.0, APPROACH).set_trans(Tween.TRANS_QUINT).set_ease(Tween.EASE_OUT)
+	run.tween_callback(func() -> void:
+		_message = "ворота открываются"
+		_site.slide_gate(true))
+	run.tween_interval(GATE_SLIDE)
+	# backing in: the tail swings through the gate while the cab comes round, which is
+	# one curve and a turn rather than a lorry sliding sideways
+	run.tween_method(func(t: float) -> void: _back_in(halt, t),
+		0.0, 1.0, BACK_IN).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	run.tween_callback(func() -> void:
 		_drop_crate()
 		_message = "разгрузка")
-	run.tween_interval(maxf(1.0, seconds))
-	run.tween_property(_lorry, "global_position", away, DRIVE_IN * 0.45) \
-		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	run.tween_interval(2.5)
+	run.tween_method(func(t: float) -> void: _back_in(halt, 1.0 - t),
+		0.0, 1.0, BACK_IN * 0.8).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	run.tween_callback(func() -> void: _site.slide_gate(false))
+	run.tween_method(func(t: float) -> void:
+		_pose(halt.lerp(Vector3(_gate_x + 80.0, 0, _street), t), -PI * 0.5),
+		0.0, 1.0, APPROACH * 0.7).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	run.tween_callback(func() -> void:
-		_lorry.queue_free()
+		if _lorry != null and is_instance_valid(_lorry):
+			_lorry.queue_free()
 		_lorry = null
 		_message = "ящик на площадке: E — открыть")
 
 
+func _back_in(halt: Vector3, t: float) -> void:
+	## A quadratic curve from the street to the bay with its corner out in the road:
+	## the tail goes in first and the cab follows round, which is what reversing
+	## through a gate looks like.
+	var tail := Vector3(_gate_x, 0, _at.z - 1.4)
+	var bend := Vector3(_gate_x + 7.0, 0, _street + 0.5)
+	var a := halt.lerp(bend, t)
+	var b := bend.lerp(tail, t)
+	_pose(a.lerp(b, t), lerp_angle(-PI * 0.5, 0.0, clampf(t * 1.25, 0.0, 1.0)))
+
+
+func _pose(at: Vector3, yaw: float) -> void:
+	if _lorry == null or not is_instance_valid(_lorry):
+		return
+	_lorry.global_position = at
+	_lorry.rotation.y = yaw
+
+
+# ------------------------------------------------------------------ the crate
+
 func _drop_crate() -> void:
-	# added to the tree before being placed: a node that is not in it has no global
-	# transform, and Godot answers the question with an identity and an error
 	_crate = Assets.instance("delivery/crate_body")
 	add_child(_crate)
 	_crate.global_position = _at
-	_lid = Assets.instance("delivery/crate_lid")
-	add_child(_lid)
-	# the hinge line is the crate's back top edge, and the model is authored about it
-	_lid.global_position = _at + Vector3(0, 2.14, 0.64)
+	_door = Assets.instance("delivery/crate_lid")
+	add_child(_door)
+	# hinged on the left edge of the front face, on the floor
+	_door.global_position = _at + Vector3(-0.41, 0.14, -0.64)
 
 	for i in ORDER.size():
 		var part := Assets.instance("delivery/%s" % ORDER[i])
 		part.visible = false
 		add_child(part)
-		_parts.append(part)
+		_parts.append({"node": part, "kind": i})
 	_stack()
 
 
 func _stack() -> void:
-	## What is left, standing in the crate. Only the top one is reachable, so the rest
-	## are there to show the crate emptying.
-	for i in _parts.size():
-		var part: Node3D = _parts[i]
+	for piece in _parts:
+		var part: Node3D = piece["node"]
 		part.visible = _open
-		part.global_position = _at + Vector3(0.0, 0.16, -0.24 + i * 0.07)
+		part.global_position = _part_at(piece["kind"]) - Vector3(0, _sits(piece["kind"]), 0)
 		part.rotation = Vector3(0, 0, 0)
 
 
-# -------------------------------------------------------------------- input
+func _sits(kind: int) -> float:
+	## Models stand on their own origin; the slot is the middle of the piece, so it is
+	## dropped by half its height to land on the crate floor.
+	return (PART_SLOT[kind][1] as Vector3).y
+
+
+func _part_at(i: int) -> Vector3:
+	return _at + (PART_SLOT[mini(i, PART_SLOT.size() - 1)][0] as Vector3)
+
+
+func _part_half(i: int) -> Vector3:
+	return PART_SLOT[mini(i, PART_SLOT.size() - 1)][1]
+
+
+func part_aim() -> Vector3:
+	## Where to point to take the piece that goes on next. The checks aim with this
+	## rather than at a guessed height, so what they prove is that pointing at a part
+	## takes that part.
+	var next := -1
+	for piece in _parts:
+		if next < 0 or piece["kind"] < next:
+			next = piece["kind"]
+	return _part_at(next) if next >= 0 else _at
+
+
+func _swing(open: bool) -> void:
+	_open = open
+	var turn := create_tween()
+	turn.tween_property(_door, "rotation:y", deg_to_rad(-110.0 if open else 0.0), 0.6) \
+		.set_trans(Tween.TRANS_CUBIC)
+	_stack()
+
+
+func _clear_crate() -> void:
+	for node in [_crate, _door]:
+		if node != null and is_instance_valid(node):
+			node.queue_free()
+	_crate = null
+	_door = null
+	_open = false
+	_aimed = -1
+	_message = ""
+
+
+# ------------------------------------------------------------------- pointing
+
+func _process(_delta: float) -> void:
+	_aimed = _pick_part()
+	if _aimed < 0 or _taken >= 0:
+		_outline.visible = false
+		return
+	var kind: int = _parts[_aimed]["kind"]
+	_outline.show_at(Transform3D(Basis().scaled(_part_half(kind) * 2.0),
+		_part_at(kind)), Outline.COOL)
+
+
+func _pick_part() -> int:
+	## The part the crosshair is actually on, as a box. A cone aimed at the middle of
+	## the crate meant hunting for the one spot the game agreed was a part.
+	if not _open or _parts.is_empty() or _eye == null or not is_instance_valid(_eye):
+		return -1
+	var origin := _eye.global_position
+	var dir := -_eye.global_transform.basis.z
+	var best := -1
+	var best_at := REACH
+	for i in _parts.size():
+		var kind: int = _parts[i]["kind"]
+		var half := _part_half(kind)
+		var t := _enters(origin - _part_at(kind), dir, -half, half)
+		if t >= 0.05 and t < best_at:
+			best_at = t
+			best = i
+	return best
+
+
+func _enters(from: Vector3, along: Vector3, low: Vector3, high: Vector3) -> float:
+	var near := -INF
+	var far := INF
+	for axis in 3:
+		if absf(along[axis]) < 1e-6:
+			if from[axis] < low[axis] or from[axis] > high[axis]:
+				return -1.0
+			continue
+		var a := (low[axis] - from[axis]) / along[axis]
+		var b := (high[axis] - from[axis]) / along[axis]
+		near = maxf(near, minf(a, b))
+		far = minf(far, maxf(a, b))
+	if far < maxf(near, 0.0):
+		return -1.0
+	return near
+
+
+func _aiming_at_crate() -> bool:
+	if _crate == null or _eye == null or not is_instance_valid(_eye):
+		return false
+	var centre := _at + Vector3(0, 1.1, 0)
+	if _eye.global_position.distance_to(centre) > REACH:
+		return false
+	var towards := (centre - _eye.global_position).normalized()
+	return -_eye.global_transform.basis.z.dot(towards) > 0.55
+
+
+# ---------------------------------------------------------------------- input
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _site.reading_screen():
@@ -132,26 +294,18 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.keycode == KEY_X:
 		if _taken >= 0:
 			_place_part()
-		elif _open and not _parts.is_empty() and _aiming_at_crate(true):
-			_take_part()
+		elif _aimed >= 0:
+			_take_part(_aimed)
 
 
-func _swing(open: bool) -> void:
-	_open = open
-	var turn := create_tween()
-	turn.tween_property(_lid, "rotation:x", deg_to_rad(LID_OPEN if open else 0.0), 0.5) \
-		.set_trans(Tween.TRANS_CUBIC)
-	_stack()
-
-
-func _take_part() -> void:
-	_taken = _parts.size() - 1
-	var part: Node3D = _parts[_taken]
-	part.visible = false
+func _take_part(index: int) -> void:
+	_taken = _parts[index]["kind"]
+	(_parts[index]["node"] as Node3D).visible = false
 	_carried = Assets.instance("delivery/%s" % ORDER[_taken])
 	_carried.position = CARRY
 	_carried.scale = Vector3.ONE * 0.5
 	_eye.add_child(_carried)
+	_outline.visible = false
 
 
 func _place_part() -> void:
@@ -160,37 +314,24 @@ func _place_part() -> void:
 	if spot.is_empty():
 		_message = "ставить надо на размеченное место"
 		return
-	if not _site.can_build(spot, ORDER.size() - _taken - 1):
-		_message = "сначала ставится %s" % _name(_next_for(spot))
+	if not _site.can_build(spot, _taken):
+		_message = "сначала ставится %s" % _name(_site.built_steps(spot))
 		return
-	_site.build_step(spot, ORDER.size() - _taken - 1, ORDER[_taken])
-	_parts.remove_at(_taken)
+	_site.build_step(spot, _taken, ORDER[_taken])
+	for i in _parts.size():
+		if _parts[i]["kind"] == _taken:
+			(_parts[i]["node"] as Node3D).queue_free()
+			_parts.remove_at(i)
+			break
 	_taken = -1
 	if _carried != null and is_instance_valid(_carried):
 		_carried.queue_free()
 	_carried = null
 	_message = ""
+	_stack()
 	if _parts.is_empty():
 		_clear_crate()
 
-
-func _next_for(spot: Dictionary) -> int:
-	var done: int = _site.built_steps(spot)
-	return ORDER.size() - done - 1
-
-
-func _clear_crate() -> void:
-	if _crate != null:
-		_crate.queue_free()
-	if _lid != null:
-		_lid.queue_free()
-	_crate = null
-	_lid = null
-	_open = false
-	_message = ""
-
-
-# ------------------------------------------------------------------ helpers
 
 func _name(index: int) -> String:
 	if index < 0 or index >= ORDER.size():
@@ -198,20 +339,7 @@ func _name(index: int) -> String:
 	return NAMED.get(ORDER[index], ORDER[index])
 
 
-func _aiming_at_crate(inside := false) -> bool:
-	if _crate == null or _eye == null or not is_instance_valid(_eye):
-		return false
-	# generous: a crate is a big thing at arm's length, and a tight cone means hunting
-	# for the one spot on it the game agrees is the crate
-	var centre := _at + Vector3(0, 1.1 if not inside else 1.8, 0)
-	if _eye.global_position.distance_to(centre) > REACH:
-		return false
-	var towards := (centre - _eye.global_position).normalized()
-	return -_eye.global_transform.basis.z.dot(towards) > 0.55
-
-
 func solid_boxes() -> Array:
-	## What the crate stops the crosshair seeing through, handed to whoever asks.
 	if _crate == null:
 		return []
 	return [{"xform": Transform3D(Basis(), _at + Vector3(0, 1.07, 0)),

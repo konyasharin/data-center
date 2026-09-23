@@ -19,14 +19,14 @@ const HELD := Vector3(0.30, -0.26, -0.62)   # where it rides, in camera space
 const U := 0.04445
 const DEEP := 0.75           # how far back a chassis runs from the cabinet face
 const TOP_U := 35            # the highest unit a server can take; 36+ is panels
-const EDGE := Color(0.98, 0.78, 0.22)
-const EDGE_TAKE := Color(0.40, 0.86, 0.58)
+const EDGE := Outline.WARM
+const EDGE_TAKE := Outline.COOL
 
 var _wiring: Wiring
 var _site: Object
 var _bays: Array[Dictionary] = []
 var _eye: Camera3D
-var _edges: MeshInstance3D
+var _edges: Outline
 var _ghost: MeshInstance3D            # the chassis in motion
 var _carried: MeshInstance3D          # and the one in the player's hands
 var _held := -1                       # device being carried, or -1
@@ -41,10 +41,7 @@ func setup(wiring: Wiring, site: Object, bays: Array[Dictionary], eye: Camera3D)
 	_bays = bays
 	_eye = eye
 
-	_edges = MeshInstance3D.new()
-	_edges.mesh = _wire_box()
-	_edges.material_override = _glow(EDGE)
-	_edges.visible = false
+	_edges = Outline.make(EDGE)
 	add_child(_edges)
 
 	_ghost = MeshInstance3D.new()
@@ -80,8 +77,7 @@ func _process(_delta: float) -> void:
 	_edges.visible = not _aim.is_empty() and not _busy
 	if not _edges.visible:
 		return
-	_edges.global_transform = _aim["box"]
-	_edges.material_override = _glow(EDGE_TAKE if _aim.has("device") else EDGE)
+	_edges.show_at(_aim["box"], EDGE_TAKE if _aim.has("device") else EDGE)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -330,40 +326,3 @@ func _refill(bay: Dictionary) -> void:
 		for i in placed.size():
 			pool.multimesh.set_instance_transform(i, placed[i])
 
-
-# ------------------------------------------------------------------ geometry
-
-func _wire_box() -> ArrayMesh:
-	## Edges only: a filled highlight over a chassis hides the thing being pointed at,
-	## and Godot's line width is one pixel whatever is asked for, which at this size is
-	## exactly the thin outline wanted.
-	var corners := PackedVector3Array()
-	for i in 8:
-		corners.append(Vector3(
-			-0.5 + float(i & 1), -0.5 + float((i >> 1) & 1), -0.5 + float((i >> 2) & 1)))
-	var lines := PackedVector3Array()
-	for a in 8:
-		for b in range(a + 1, 8):
-			# neighbours on the cube differ in exactly one coordinate
-			if (a ^ b) in [1, 2, 4]:
-				lines.append(corners[a])
-				lines.append(corners[b])
-	var arrays := []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = lines
-	var mesh := ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, arrays)
-	return mesh
-
-
-func _glow(colour: Color) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = colour
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	# Drawn through everything, because everything is in the way: from the front the
-	# cabinet door, from the back the door and the cords. A depth-tested outline is
-	# invisible exactly when it is needed. Its back edges did once read as a second
-	# unit being lit, but that was the pick being wrong, not the drawing.
-	mat.no_depth_test = true
-	mat.render_priority = 8
-	return mat

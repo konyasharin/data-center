@@ -46,34 +46,35 @@ def make_crate_body():
 	for sx in (-1, 1):
 		b.box((PLANK * 2, CRATE_D, CRATE_H), (sx * (CRATE_W / 2 - PLANK), 0, CRATE_H / 2),
 		      "wood", bevel=3 * MM)
-	for sy in (-1, 1):
-		_planked(b, (CRATE_W - PLANK * 2, CRATE_H),
-		         (0, sy * (CRATE_D / 2 - PLANK), CRATE_H / 2))
+	# back only: the front is a separate panel, because a crate is opened from the
+	# front and a lid on top is opened by somebody standing on a ladder
+	_planked(b, (CRATE_W - PLANK * 2, CRATE_H), (0, CRATE_D / 2 - PLANK, CRATE_H / 2))
+	b.box((CRATE_W + 0.04, PLANK * 2, 90 * MM), (0, 0, CRATE_H - 0.045), "wood",
+	      bevel=3 * MM)
 	# the pallet it stands on, and the corner braces
 	b.box((CRATE_W + 0.06, CRATE_D + 0.06, 0.14), (0, 0, 0.07), "wood", bevel=4 * MM)
 	for sx in (-1, 1):
 		for sy in (-1, 1):
 			b.box((60 * MM, 60 * MM, CRATE_H), (sx * (CRATE_W / 2 - 30 * MM),
 			      sy * (CRATE_D / 2 - 30 * MM), CRATE_H / 2), "wood", bevel=3 * MM)
-	b.box((0.34, 4 * MM, 0.22), (0, -CRATE_D / 2 - PLANK, CRATE_H * 0.62), "label",
-	      bevel=1 * MM)
 	return b.finish("crate_body")
 
 
 def make_crate_lid():
-	"""Origin on the hinge line along the crate's back top edge, so Godot swings the
-	lid by turning one node and the body does not move with it."""
+	"""The front panel. Origin on its left edge, on the floor, so the door swings about
+	a vertical hinge and nothing else in the crate moves with it."""
 	b = Builder()
-	w = CRATE_W + 0.04
-	b.box((w, PLANK * 2, 80 * MM), (0, 0, 0), "wood", bevel=3 * MM)
-	boards = 9
-	step = (CRATE_D - 0.02) / boards
-	for i in range(boards):
-		b.box((w, step * 0.9, PLANK), (0, -step * (i + 0.5), -PLANK / 2), "wood",
-		      bevel=2 * MM)
-	for sx in (-1, 1):
-		b.box((50 * MM, CRATE_D - 0.04, PLANK), (sx * (w / 2 - 40 * MM),
-		      -(CRATE_D - 0.02) / 2, -PLANK * 1.6), "wood", bevel=2 * MM)
+	w = CRATE_W - PLANK * 2
+	rows = int(CRATE_H / 0.12)
+	step = CRATE_H / rows
+	for i in range(rows):
+		b.box((w, PLANK, step * 0.88), (w / 2, 0, step * (i + 0.5)), "wood", bevel=2 * MM)
+	for z in (0.16, CRATE_H - 0.16):
+		b.box((w, PLANK * 1.6, 70 * MM), (w / 2, -PLANK * 0.4, z), "wood", bevel=2 * MM)
+	b.box((60 * MM, 40 * MM, 0.16), (w - 70 * MM, -PLANK * 1.2, CRATE_H * 0.5),
+	      "steel_dark", bevel=3 * MM)
+	b.box((0.34, 4 * MM, 0.22), (w / 2, -PLANK * 0.8, CRATE_H * 0.66), "label",
+	      bevel=1 * MM)
 	return b.finish("crate_lid")
 
 
@@ -154,7 +155,7 @@ def main():
 
 	build.report()
 
-	lid.location = (0, CRATE_D / 2 - PLANK, CRATE_H)
+	lid.location = (-(CRATE_W - PLANK * 2) / 2, -CRATE_D / 2 + PLANK, 0)
 	exporter.contact_sheet([body, lid],
 	                       os.path.join(exporter.PREVIEWS, "crate.png"),
 	                       views=(("front", 3.0, 10), ("three_q", 2.6, 26)))
